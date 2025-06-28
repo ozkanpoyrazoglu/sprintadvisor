@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sprint Planner</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background-color: #fafafa;
+            color: #2d3748;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 600;
+            color: #1a202c;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            font-size: 16px;
+            color: #718096;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group:last-child {
+            margin-bottom: 0;
+        }
+
+        label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: #4a5568;
+            margin-bottom: 6px;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            background-color: white;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #3182ce;
+            box-shadow: 0 0 0 3px rgba(49, 130, 206, 0.1);
+        }
+
+        .help-text {
+            font-size: 13px;
+            color: #718096;
+            margin-top: 4px;
+        }
+
+        button {
+            background-color: #3182ce;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        button:hover {
+            background-color: #2c5aa0;
+        }
+
+        button:active {
+            transform: translateY(1px);
+        }
+
+        button:disabled {
+            background-color: #a0aec0;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .alert {
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-size: 14px;
+        }
+
+        .alert-success {
+            background-color: #f0fff4;
+            border: 1px solid #9ae6b4;
+            color: #22543d;
+        }
+
+        .alert-error {
+            background-color: #fed7d7;
+            border: 1px solid #feb2b2;
+            color: #822727;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px 20px;
+            color: #718096;
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid #e2e8f0;
+            border-top: 2px solid #3182ce;
+            border-radius: 50%;
+            margin: 0 auto 12px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .results {
+            margin-top: 32px;
+        }
+
+        .results-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 20px;
+        }
+
+        .results-meta {
+            font-size: 14px;
+            color: #718096;
+            margin-bottom: 24px;
+        }
+
+        .member-card {
+            background-color: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .member-name {
+            font-size: 16px;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 12px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .stat-item {
+            text-align: center;
+            background-color: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 12px 8px;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: 600;
+            color: #3182ce;
+            display: block;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #718096;
+            margin-top: 2px;
+        }
+
+        .rationale {
+            font-size: 13px;
+            color: #718096;
+            font-style: italic;
+        }
+
+        .summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 24px;
+            border-radius: 8px;
+            margin-top: 24px;
+        }
+
+        .summary h4 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .summary p {
+            font-size: 14px;
+            margin-bottom: 6px;
+        }
+
+        .summary p:last-child {
+            margin-bottom: 0;
+        }
+
+        .oauth-setup {
+            text-align: left;
+        }
+
+        .oauth-info {
+            background-color: #ebf8ff;
+            border: 1px solid #bee3f8;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+
+        .oauth-info p {
+            font-size: 14px;
+            color: #2c5aa0;
+            margin-bottom: 8px;
+        }
+
+        .oauth-info p:last-child {
+            margin-bottom: 0;
+        }
+
+        .oauth-info a {
+            color: #3182ce;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .oauth-info a:hover {
+            text-decoration: underline;
+        }
+
+        .step-indicator {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .step-number {
+            background-color: #3182ce;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+            margin-right: 8px;
+        }
+
+        .step-number.completed {
+            background-color: #38a169;
+        }
+
+        .step-text {
+            color: #4a5568;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Sprint Planner</h1>
+            <p>Takımınız için akıllı story point kapasite önerisi</p>
+        </div>
+
+        <!-- Step 1: OAuth Setup -->
+        <div class="card">
+            <div class="step-indicator">
+                <div class="step-number">1</div>
+                <div class="step-text">Trello ile Bağlantı Kurma</div>
+            </div>
+            
+            <div id="auth-status" class="hidden"></div>
+            
+            <div id="oauth-setup" class="oauth-setup">
+                <div class="oauth-info">
+                    <p><strong>Gerekli Bilgiler:</strong></p>
+                    <p>• <a href="https://trello.com/app-key" target="_blank">Trello Developer Page</a> sayfasından API Key alın</p>
+                    <p>• Aynı sayfada "Show OAuth Secret" butonuna tıklayıp OAuth Secret'ı kopyalayın</p>
+                </div>
+                
+                <div class="form-group">
+                    <label for="api_key">Trello API Key</label>
+                    <input type="text" id="api_key" placeholder="API anahtarınızı buraya girin">
+                </div>
+                
+                <div class="form-group">
+                    <label for="api_secret">Trello OAuth Secret</label>
+                    <input type="text" id="api_secret" placeholder="OAuth secret'ınızı buraya girin">
+                </div>
+                
+                <button onclick="startOAuth()">Trello ile Giriş Yap</button>
+            </div>
+            
+            <div id="board-setup" class="hidden">
+                <div class="form-group">
+                    <label for="board_id">Board ID</label>
+                    <input type="text" id="board_id" placeholder="Board ID'nizi girin">
+                    <div class="help-text">Board URL'den bulabilirsiniz: trello.com/b/<strong>BOARD_ID</strong>/board-name</div>
+                </div>
+                <button onclick="setupBoard()">Board'a Bağlan</button>
+            </div>
+            
+            <div id="setup-result"></div>
+        </div>
+
+        <!-- Step 2: Analysis Setup -->
+        <div class="card hidden" id="step2">
+            <div class="step-indicator">
+                <div class="step-number">2</div>
+                <div class="step-text">Analiz Ayarları</div>
+            </div>
+            
+            <div class="form-group">
+                <label for="archive_list">ArchiveNew Listesi</label>
+                <select id="archive_list">
+                    <option value="">Liste seçin...</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="current_sprint_number">Mevcut Sprint Numarası</label>
+                <input type="number" id="current_sprint_number" placeholder="240" min="1">
+                <div class="help-text">Son 3 sprint otomatik olarak analiz edilecek (örn: 237, 238, 239)</div>
+            </div>
+            
+            <button onclick="analyzePerformance()">Performans Analizini Başlat</button>
+            <div id="analysis-result"></div>
+        </div>
+
+        <!-- Step 3: Capacity Planning -->
+        <div class="card hidden" id="step3">
+            <div class="step-indicator">
+                <div class="step-number">3</div>
+                <div class="step-text">Kapasite Planlaması</div>
+            </div>
+            
+            <div class="form-group">
+                <label for="current_sprint_total">Mevcut Sprint Toplam Story Point</label>
+                <input type="number" id="current_sprint_total" placeholder="45" min="0">
+                <div class="help-text">Planlamayı yaptığınız sprintin toplam story point değeri</div>
+            </div>
+            
+            <button onclick="suggestCapacity()">Kapasite Önerisi Al</button>
+            <div id="suggestion-result"></div>
+        </div>
+    </div>
+
+    <script>
+        let oauthCompleted = false;
+        let trelloConnected = false;
+        let analysisCompleted = false;
+
+        window.addEventListener('DOMContentLoaded', function() {
+            checkAuthStatus();
+        });
+
+        function checkAuthStatus() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const authStatus = urlParams.get('auth');
+            
+            if (authStatus === 'success') {
+                showAuthSuccess();
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } else if (authStatus === 'error') {
+                showAlert('setup-result', 'OAuth authentication başarısız oldu', 'error');
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
+
+        function showAuthSuccess() {
+            document.getElementById('oauth-setup').classList.add('hidden');
+            document.getElementById('board-setup').classList.remove('hidden');
+            
+            const stepNumber = document.querySelector('.step-number');
+            stepNumber.classList.add('completed');
+            
+            const authStatus = document.getElementById('auth-status');
+            authStatus.classList.remove('hidden');
+            authStatus.innerHTML = '<div class="alert alert-success">OAuth authentication başarılı. Board ID\'nizi girin.</div>';
+            
+            oauthCompleted = true;
+        }
+
+        async function startOAuth() {
+            const apiKey = document.getElementById('api_key').value;
+            const apiSecret = document.getElementById('api_secret').value;
+
+            if (!apiKey || !apiSecret) {
+                showAlert('setup-result', 'API Key ve OAuth Secret alanlarını doldurun', 'error');
+                return;
+            }
+
+            showLoading('setup-result');
+
+            try {
+                const response = await fetch('/auth/setup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        api_key: apiKey,
+                        api_secret: apiSecret
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert('setup-result', 'Trello\'ya yönlendiriliyorsunuz...', 'success');
+                    setTimeout(() => {
+                        window.location.href = data.auth_url;
+                    }, 1000);
+                } else {
+                    showAlert('setup-result', data.error, 'error');
+                }
+            } catch (error) {
+                showAlert('setup-result', 'OAuth setup hatası: ' + error.message, 'error');
+            }
+        }
+
+        async function setupBoard() {
+            if (!oauthCompleted) {
+                showAlert('setup-result', 'Önce OAuth authentication yapın', 'error');
+                return;
+            }
+
+            const boardId = document.getElementById('board_id').value;
+
+            if (!boardId) {
+                showAlert('setup-result', 'Board ID girin', 'error');
+                return;
+            }
+
+            showLoading('setup-result');
+
+            try {
+                const response = await fetch('/setup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        board_id: boardId
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert('setup-result', data.message, 'success');
+                    populateLists(data.lists);
+                    document.getElementById('step2').classList.remove('hidden');
+                    
+                    // Mark step 1 as completed
+                    const stepNumbers = document.querySelectorAll('.step-number');
+                    stepNumbers[0].classList.add('completed');
+                    
+                    trelloConnected = true;
+                } else {
+                    showAlert('setup-result', data.error, 'error');
+                }
+            } catch (error) {
+                showAlert('setup-result', 'Board bağlantı hatası: ' + error.message, 'error');
+            }
+        }
+
+        function populateLists(lists) {
+            const select = document.getElementById('archive_list');
+            select.innerHTML = '<option value="">Liste seçin...</option>';
+            
+            lists.forEach(list => {
+                const option = document.createElement('option');
+                option.value = list.id;
+                option.textContent = list.name;
+                select.appendChild(option);
+            });
+        }
+
+        async function analyzePerformance() {
+            if (!trelloConnected) {
+                showAlert('analysis-result', 'Önce Trello bağlantısını kurun', 'error');
+                return;
+            }
+
+            const archiveListId = document.getElementById('archive_list').value;
+            const currentSprintNumber = document.getElementById('current_sprint_number').value;
+            
+            if (!archiveListId) {
+                showAlert('analysis-result', 'ArchiveNew listesini seçin', 'error');
+                return;
+            }
+
+            if (!currentSprintNumber) {
+                showAlert('analysis-result', 'Mevcut sprint numarasını girin', 'error');
+                return;
+            }
+
+            showLoading('analysis-result');
+
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        archive_list_id: archiveListId,
+                        current_sprint_number: parseInt(currentSprintNumber)
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    const analyzedSprints = data.sprint_numbers.join(', ');
+                    showAlert('analysis-result', 
+                        `Analiz tamamlandı. ${data.total_cards_analyzed} kart analiz edildi (Sprintler: ${analyzedSprints})`, 
+                        'success'
+                    );
+                    displayMemberStats(data.member_stats, data.sprint_numbers);
+                    document.getElementById('step3').classList.remove('hidden');
+                    
+                    // Mark step 2 as completed
+                    const stepNumbers = document.querySelectorAll('.step-number');
+                    stepNumbers[1].classList.add('completed');
+                    
+                    analysisCompleted = true;
+                } else {
+                    showAlert('analysis-result', data.error, 'error');
+                }
+            } catch (error) {
+                showAlert('analysis-result', 'Analiz hatası: ' + error.message, 'error');
+            }
+        }
+
+        async function suggestCapacity() {
+            if (!analysisCompleted) {
+                showAlert('suggestion-result', 'Önce performans analizi yapın', 'error');
+                return;
+            }
+
+            const currentSprintTotal = document.getElementById('current_sprint_total').value;
+            const archiveListId = document.getElementById('archive_list').value;
+            const currentSprintNumber = document.getElementById('current_sprint_number').value;
+
+            if (!currentSprintTotal) {
+                showAlert('suggestion-result', 'Mevcut sprint toplam story point girin', 'error');
+                return;
+            }
+
+            showLoading('suggestion-result');
+
+            try {
+                const response = await fetch('/suggest', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        archive_list_id: archiveListId,
+                        current_sprint_total: parseInt(currentSprintTotal),
+                        current_sprint_number: parseInt(currentSprintNumber)
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert('suggestion-result', 'Kapasite önerileri hazırlandı', 'success');
+                    displaySuggestions(data);
+                    
+                    // Mark step 3 as completed
+                    const stepNumbers = document.querySelectorAll('.step-number');
+                    stepNumbers[2].classList.add('completed');
+                } else {
+                    showAlert('suggestion-result', data.error, 'error');
+                }
+            } catch (error) {
+                showAlert('suggestion-result', 'Öneri hatası: ' + error.message, 'error');
+            }
+        }
+
+        function displayMemberStats(memberStats, sprintNumbers) {
+            const resultDiv = document.getElementById('analysis-result');
+            
+            let html = `
+                <div class="results">
+                    <div class="results-title">Takım Performans Analizi</div>
+                    <div class="results-meta">Analiz edilen sprintler: ${sprintNumbers.join(', ')}</div>
+            `;
+
+            for (const [memberId, stats] of Object.entries(memberStats)) {
+                html += `
+                    <div class="member-card">
+                        <div class="member-name">${stats.name}</div>
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <span class="stat-value">${stats.total_completed}</span>
+                                <div class="stat-label">Toplam SP</div>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value">${stats.avg_sp_per_sprint.toFixed(1)}</span>
+                                <div class="stat-label">Sprint Ortalaması</div>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value">${stats.completion_rate.toFixed(0)}%</span>
+                                <div class="stat-label">Tamamlama Oranı</div>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value">${stats.sprints_participated.length}</span>
+                                <div class="stat-label">Sprint Sayısı</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+            resultDiv.innerHTML += html;
+        }
+
+        function displaySuggestions(data) {
+            const resultDiv = document.getElementById('suggestion-result');
+            
+            let html = `
+                <div class="results">
+                    <div class="results-title">Kapasite Önerileri</div>
+                    <div class="results-meta">
+                        Analiz edilen sprintler: ${data.analyzed_sprints.join(', ')} | 
+                        Mevcut sprint: ${data.current_sprint_number}
+                    </div>
+            `;
+
+            for (const [memberId, suggestion] of Object.entries(data.suggestions)) {
+                html += `
+                    <div class="member-card">
+                        <div class="member-name">${suggestion.name}</div>
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <span class="stat-value">${suggestion.suggested_sp}</span>
+                                <div class="stat-label">Önerilen SP</div>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value">${suggestion.historical_avg}</span>
+                                <div class="stat-label">Geçmiş Ortalama</div>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value">${suggestion.completion_rate}%</span>
+                                <div class="stat-label">Tamamlama Oranı</div>
+                            </div>
+                        </div>
+                        <div class="rationale">${suggestion.rationale}</div>
+                    </div>
+                `;
+            }
+
+            const difference = data.current_sprint_total - data.total_suggested_sp;
+            const differenceText = difference > 0 ? 
+                `${difference} SP fazla planlanmış` : 
+                `${Math.abs(difference)} SP eksik planlanmış`;
+
+            html += `
+                <div class="summary">
+                    <h4>Sprint ${data.current_sprint_number} Özeti</h4>
+                    <p><strong>Mevcut Sprint Toplam:</strong> ${data.current_sprint_total} SP</p>
+                    <p><strong>Önerilen Toplam:</strong> ${data.total_suggested_sp} SP</p>
+                    <p><strong>Fark:</strong> ${differenceText}</p>
+                </div>
+            `;
+
+            html += '</div>';
+            resultDiv.innerHTML += html;
+        }
+
+        function showAlert(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+        }
+
+        function showLoading(elementId) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <div>İşleniyor...</div>
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>
