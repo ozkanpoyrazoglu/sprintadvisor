@@ -478,6 +478,12 @@
                 <div class="help-text">Planlamayı yaptığınız sprintin toplam story point değeri</div>
             </div>
             
+            <div class="form-group">
+                <label for="sprint_working_days">Sprint Çalışma Günü Sayısı</label>
+                <input type="number" id="sprint_working_days" placeholder="5" min="1" max="10" value="5">
+                <div class="help-text">Bu sprint'teki çalışma günü sayısı (tatil günleri için ayarlayın)</div>
+            </div>
+            
             <button onclick="suggestCapacity()">Kapasite Önerisi Al</button>
             <div id="suggestion-result"></div>
         </div>
@@ -725,6 +731,7 @@
             }
 
             const currentSprintTotal = document.getElementById('current_sprint_total').value;
+            const sprintWorkingDays = document.getElementById('sprint_working_days').value;
             const archiveListId = document.getElementById('archive_list').value;
             const currentSprintNumber = document.getElementById('current_sprint_number').value;
 
@@ -744,7 +751,8 @@
                     body: JSON.stringify({
                         archive_list_id: archiveListId,
                         current_sprint_total: parseInt(currentSprintTotal),
-                        current_sprint_number: parseInt(currentSprintNumber)
+                        current_sprint_number: parseInt(currentSprintNumber),
+                        sprint_working_days: parseInt(sprintWorkingDays) || 5
                     })
                 });
 
@@ -753,6 +761,27 @@
                 if (data.success) {
                     showAlert('suggestion-result', 'Kapasite önerileri hazırlandı', 'success');
                     displaySuggestions(data);
+                    
+                    // Store data for dashboard
+                    const dashboardData = {
+                        currentSprint: parseInt(document.getElementById('current_sprint_number').value),
+                        sprinters: Object.entries(data.suggestions).map(([id, suggestion]) => ({
+                            id: id,
+                            name: suggestion.name
+                        })),
+                        capacityData: data.suggestions
+                    };
+                    sessionStorage.setItem('sprintPlanningData', JSON.stringify(dashboardData));
+                    
+                    // Add dashboard button
+                    const dashboardBtn = `
+                        <div style="text-align: center; margin-top: 24px;">
+                            <button onclick="goToDashboard()" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 12px 24px; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer;">
+                                🎯 Open Sprint Planning Dashboard
+                            </button>
+                        </div>
+                    `;
+                    document.getElementById('suggestion-result').innerHTML += dashboardBtn;
                     
                     // Mark step 4 as completed
                     const stepNumbers = document.querySelectorAll('.step-number');
@@ -927,6 +956,12 @@
                                 <input type="checkbox" id="customer_${sprinter.id}" data-sprinter="${sprinter.id}">
                                 <label for="customer_${sprinter.id}">Müşteri Dedikesi</label>
                             </div>
+                            <div class="vacation-input" style="display: none;" id="customer_days_${sprinter.id}">
+                                <label for="customer_duration_${sprinter.id}">Dedike Gün:</label>
+                                <input type="number" id="customer_duration_${sprinter.id}" data-sprinter="${sprinter.id}" 
+                                       min="1" max="10" placeholder="5" value="5">
+                                <span>gün</span>
+                            </div>
                             <div class="checkbox-group">
                                 <input type="checkbox" id="oncall_${sprinter.id}" data-sprinter="${sprinter.id}">
                                 <label for="oncall_${sprinter.id}">Nöbetçi</label>
@@ -944,6 +979,19 @@
 
             container.innerHTML = html;
 
+            // Add event listeners for customer delegate checkboxes
+            document.querySelectorAll('[id^="customer_"]').forEach(checkbox => {
+                if (checkbox.type === 'checkbox') {
+                    checkbox.addEventListener('change', function() {
+                        const sprinterId = this.dataset.sprinter;
+                        const daysContainer = document.getElementById(`customer_days_${sprinterId}`);
+                        if (daysContainer) {
+                            daysContainer.style.display = this.checked ? 'flex' : 'none';
+                        }
+                    });
+                }
+            });
+
             // Load existing exceptions for this sprint
             loadExistingExceptions(sprintNumber);
         }
@@ -958,7 +1006,19 @@
                     Object.entries(data.exceptions).forEach(([sprinterId, exceptions]) => {
                         if (exceptions.customer_delegate) {
                             const checkbox = document.getElementById(`customer_${sprinterId}`);
-                            if (checkbox) checkbox.checked = true;
+                            if (checkbox) {
+                                checkbox.checked = true;
+                                // Show customer days input
+                                const daysContainer = document.getElementById(`customer_days_${sprinterId}`);
+                                if (daysContainer) {
+                                    daysContainer.style.display = 'flex';
+                                }
+                                // Set customer days value
+                                const daysInput = document.getElementById(`customer_duration_${sprinterId}`);
+                                if (daysInput && exceptions.customer_delegate_days) {
+                                    daysInput.value = exceptions.customer_delegate_days;
+                                }
+                            }
                         }
                         if (exceptions.on_call) {
                             const checkbox = document.getElementById(`oncall_${sprinterId}`);
@@ -993,6 +1053,7 @@
                 if (!exceptions[sprinterId]) {
                     exceptions[sprinterId] = {
                         customer_delegate: false,
+                        customer_delegate_days: 5,
                         on_call: false,
                         vacation_days: 0
                     };
@@ -1000,6 +1061,12 @@
 
                 if (checkbox.id.startsWith('customer_') && checkbox.checked) {
                     exceptions[sprinterId].customer_delegate = true;
+                    
+                    // Get customer delegate days
+                    const daysInput = document.getElementById(`customer_duration_${sprinterId}`);
+                    if (daysInput) {
+                        exceptions[sprinterId].customer_delegate_days = parseInt(daysInput.value) || 5;
+                    }
                 } else if (checkbox.id.startsWith('oncall_') && checkbox.checked) {
                     exceptions[sprinterId].on_call = true;
                 }
@@ -1007,17 +1074,20 @@
 
             // Process vacation inputs
             vacationInputs.forEach(input => {
-                const sprinterId = input.dataset.sprinter;
-                const days = parseInt(input.value) || 0;
-                
-                if (!exceptions[sprinterId]) {
-                    exceptions[sprinterId] = {
-                        customer_delegate: false,
-                        on_call: false,
-                        vacation_days: days
-                    };
-                } else {
-                    exceptions[sprinterId].vacation_days = days;
+                if (input.id.startsWith('vacation_')) {  // Only vacation inputs, not customer duration
+                    const sprinterId = input.dataset.sprinter;
+                    const days = parseInt(input.value) || 0;
+                    
+                    if (!exceptions[sprinterId]) {
+                        exceptions[sprinterId] = {
+                            customer_delegate: false,
+                            customer_delegate_days: 5,
+                            on_call: false,
+                            vacation_days: days
+                        };
+                    } else {
+                        exceptions[sprinterId].vacation_days = days;
+                    }
                 }
             });
 
@@ -1050,6 +1120,10 @@
             } catch (error) {
                 showAlert('exceptions-result', 'Exception kaydetme hatası: ' + error.message, 'error');
             }
+        }
+
+        function goToDashboard() {
+            window.location.href = '/dashboard';
         }
 
         function showLoading(elementId) {

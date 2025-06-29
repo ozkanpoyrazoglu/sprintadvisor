@@ -26,9 +26,22 @@ class SprinterExceptions:
         """
         self.storage_file = storage_file
         self.default_settings = {
+            # Target and Base Settings
+            'target_sp_per_person': 21,     # Target SP for 100% utilization
+            'sprint_working_days': 5,       # Default working days per sprint
+            'min_sp_threshold': 3,          # Minimum SP to assign (avoid very low assignments)
+            'target_push_factor': 0.7,     # How aggressively to push towards target (0.5-1.0)
+            
+            # Exception Settings
             'customer_delegate_min_sp': 2,  # Minimum SP for customer delegates
+            'customer_delegate_days': 5,    # Default customer delegate duration (days)
             'on_call_reduction_sp': 3,      # SP reduction for on-call sprinters
-            'vacation_reduction_per_day': 0.2  # SP reduction per vacation day (20% per day)
+            'vacation_reduction_per_day': 0.2,  # SP reduction per vacation day (20% per day)
+            
+            # Algorithm Settings
+            'capacity_growth_limit': 1.5,   # Maximum growth factor per sprint (50% increase max)
+            'low_performer_boost': 2.0,     # Boost factor for consistently low performers
+            'team_balance_factor': 0.3      # How much to consider team balance (0.0-1.0)
         }
     
     def save_exceptions(self, sprint_number: int, exceptions: Dict) -> bool:
@@ -94,7 +107,9 @@ class SprinterExceptions:
         """
         try:
             data = self._load_data()
-            return data.get('settings', self.default_settings)
+            saved_settings = data.get('settings', {})
+            # Always merge with defaults to ensure all keys are present
+            return {**self.default_settings, **saved_settings}
         except Exception as e:
             print(f"❌ Settings yükleme hatası: {e}")
             return self.default_settings
@@ -125,7 +140,8 @@ class SprinterExceptions:
             return False
     
     def calculate_adjusted_capacity(self, sprinter_id: str, base_capacity: float, 
-                                  sprint_number: int, team_average_sp: float = 0) -> Dict:
+                                  sprint_number: int, team_average_sp: float = 0,
+                                  sprint_working_days: int = None) -> Dict:
         """
         Calculate adjusted capacity for a sprinter based on exceptions
         
@@ -134,6 +150,7 @@ class SprinterExceptions:
             base_capacity: Base story point capacity
             sprint_number: Current sprint number
             team_average_sp: Team average SP (for on-call calculation)
+            sprint_working_days: Working days in sprint (for holiday adjustments)
             
         Returns:
             Dict containing adjusted capacity and explanation
@@ -142,7 +159,22 @@ class SprinterExceptions:
             exceptions = self.load_exceptions(sprint_number)
             settings = self.get_settings()
             
+            # Use provided working days or default
+            working_days = sprint_working_days or settings.get('sprint_working_days', 5)
+            
             if not exceptions or sprinter_id not in exceptions:
+                # Apply working days adjustment even without exceptions
+                default_working_days = settings.get('sprint_working_days', 5)
+                if working_days != default_working_days:
+                    working_day_factor = working_days / default_working_days
+                    adjusted_sp = base_capacity * working_day_factor
+                    return {
+                        'adjusted_sp': round(adjusted_sp, 1),
+                        'original_sp': base_capacity,
+                        'adjustments': [f"Çalışma günü ayarı: {working_days} gün"],
+                        'explanation': f'Çalışma günü ayarı: {working_days} gün'
+                    }
+                
                 return {
                     'adjusted_sp': base_capacity,
                     'original_sp': base_capacity,
@@ -154,33 +186,71 @@ class SprinterExceptions:
             adjusted_sp = base_capacity
             adjustments = []
             
-            # Customer Delegate - Minimum SP
+            # Working days adjustment (applied first)
+            default_working_days = settings.get('sprint_working_days', 5)
+            if working_days != default_working_days:
+                working_day_factor = working_days / default_working_days
+                adjusted_sp = adjusted_sp * working_day_factor
+                adjustments.append(f"Çalışma günü ayarı: {working_days} gün")
+            
+            # Customer Delegate - Duration-based calculation
             if sprinter_exceptions.get('customer_delegate', False):
-                min_sp = settings['customer_delegate_min_sp']
-                if adjusted_sp > min_sp:
+                try:
+                    delegate_days = sprinter_exceptions.get('customer_delegate_days', settings.get('customer_delegate_days', 5))
+                    
+                    if delegate_days >= working_days:
+                        # Full sprint dedication
+                        min_sp = settings.get('customer_delegate_min_sp', 2)
+                        adjusted_sp = min_sp
+                        adjustments.append(f"Müşteri dedikesi (tam sprint): {min_sp} SP")
+                    else:
+                        # Partial dedication
+                        dedication_factor = delegate_days / working_days
+                        remaining_factor = 1 - dedication_factor
+                        partial_sp = max(settings.get('customer_delegate_min_sp', 2), adjusted_sp * remaining_factor)
+                        adjusted_sp = partial_sp
+                        adjustments.append(f"Müşteri dedikesi ({delegate_days}/{working_days} gün): {partial_sp:.1f} SP")
+                except Exception as customer_delegate_error:
+                    print(f"⚠️ Customer delegate hesaplama hatası: {customer_delegate_error}")
+                    # Fallback to simple minimum SP
+                    min_sp = settings.get('customer_delegate_min_sp', 2)
                     adjusted_sp = min_sp
-                    adjustments.append(f"Müşteri dedikesi: {min_sp} SP'ye düşürüldü")
+                    adjustments.append(f"Müşteri dedikesi (fallback): {min_sp} SP")
             
             # Vacation - Day-based reduction
             vacation_days = sprinter_exceptions.get('vacation_days', 0)
             if vacation_days > 0:
-                reduction_rate = settings['vacation_reduction_per_day']
-                reduction_amount = base_capacity * (vacation_days * reduction_rate)
-                adjusted_sp = max(0, adjusted_sp - reduction_amount)
-                adjustments.append(f"İzin ({vacation_days} gün): -{reduction_amount:.1f} SP")
+                try:
+                    vacation_factor = max(0, (working_days - vacation_days) / working_days)
+                    pre_vacation_sp = adjusted_sp
+                    adjusted_sp = adjusted_sp * vacation_factor
+                    reduction_amount = pre_vacation_sp - adjusted_sp
+                    adjustments.append(f"İzin ({vacation_days}/{working_days} gün): -{reduction_amount:.1f} SP")
+                except Exception as vacation_error:
+                    print(f"⚠️ Vacation hesaplama hatası: {vacation_error}")
+                    adjustments.append(f"İzin hesaplama hatası")
             
-            # On-call - Fixed reduction or percentage of team average
+            # On-call - Fixed reduction
             if sprinter_exceptions.get('on_call', False):
-                if team_average_sp > 0:
-                    # Use team average based reduction
-                    reduction = settings['on_call_reduction_sp']
-                    adjusted_sp = max(0, adjusted_sp - reduction)
-                    adjustments.append(f"Nöbetçi: -{reduction} SP (takım ortalaması: {team_average_sp:.1f})")
-                else:
-                    # Fallback to fixed reduction
-                    reduction = settings['on_call_reduction_sp']
+                try:
+                    reduction = settings.get('on_call_reduction_sp', 3)
                     adjusted_sp = max(0, adjusted_sp - reduction)
                     adjustments.append(f"Nöbetçi: -{reduction} SP")
+                except Exception as oncall_error:
+                    print(f"⚠️ On-call hesaplama hatası: {oncall_error}")
+                    adjustments.append(f"Nöbetçi hesaplama hatası")
+            
+            # Ensure minimum threshold
+            try:
+                min_threshold = settings.get('min_sp_threshold', 3)
+                if adjusted_sp > 0 and adjusted_sp < min_threshold:
+                    adjusted_sp = min_threshold
+                    adjustments.append(f"Minimum eşik: {min_threshold} SP")
+            except Exception as threshold_error:
+                print(f"⚠️ Minimum threshold hatası: {threshold_error}")
+                # Safe fallback
+                if adjusted_sp > 0 and adjusted_sp < 1:
+                    adjusted_sp = 1
             
             explanation = "; ".join(adjustments) if adjustments else "Exception yok"
             
@@ -193,6 +263,10 @@ class SprinterExceptions:
             
         except Exception as e:
             print(f"❌ Kapasite hesaplama hatası: {e}")
+            print(f"Debug info - sprinter_id: {sprinter_id}, base_capacity: {base_capacity}, sprint_number: {sprint_number}")
+            print(f"Debug info - sprint_working_days: {sprint_working_days}, team_average_sp: {team_average_sp}")
+            import traceback
+            traceback.print_exc()
             return {
                 'adjusted_sp': base_capacity,
                 'original_sp': base_capacity,
@@ -212,6 +286,9 @@ class SprinterExceptions:
                     data['sprints'] = {}
                 if 'settings' not in data:
                     data['settings'] = self.default_settings
+                else:
+                    # Migrate existing settings by merging with defaults
+                    data['settings'] = {**self.default_settings, **data['settings']}
                     
                 return data
             else:

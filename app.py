@@ -601,118 +601,76 @@ class SprintAnalyzer:
         return dict(sprint_totals)
 
     def suggest_capacity(self, member_stats, current_sprint_total_sp, current_sprint_number, 
-                       sprinter_exceptions_manager=None, historical_cards=None, target_sp_per_person=21):
+                       sprinter_exceptions_manager=None, historical_cards=None, 
+                       sprint_working_days=None):
         """
-        Mevcut sprint için kapasite önerisi yap (yeni algoritma)
+        Gelişmiş kapasite önerisi algoritması
         
         Algoritma:
-        1. Geçmiş sprintlerdeki toplam SP'leri hesapla
-        2. Her sprinter'ın aldığı pay oranını hesapla
-        3. Hedef 21 SP'ye göre yeni kapasiteyi belirle
-        4. Exception'ları uygula
+        1. Geçmiş sprint verilerini analiz et
+        2. Her sprinter için hedef SP'ye yaklaştırıcı hesaplama yap
+        3. Düşük performanslıları yukarı çek, yüksekleri dengele
+        4. Exception'ları ve çalışma günü ayarlarını uygula
         """
         suggestions = {}
         base_suggestions = {}
+        
+        # Settings al
+        settings = sprinter_exceptions_manager.get_settings() if sprinter_exceptions_manager else {}
+        target_sp = settings.get('target_sp_per_person', 21)
+        min_sp_threshold = settings.get('min_sp_threshold', 3)
+        target_push_factor = settings.get('target_push_factor', 0.7)
+        capacity_growth_limit = settings.get('capacity_growth_limit', 1.5)
+        low_performer_boost = settings.get('low_performer_boost', 2.0)
         
         # Geçmiş sprint totalleri hesapla
         sprint_totals = {}
         if historical_cards:
             sprint_totals = self.calculate_historical_sprint_totals(historical_cards)
         
-        # Her sprinter için temel kapasiteyi hesapla
+        # Her sprinter için detaylı analiz
         for member_id, stats in member_stats.items():
-            if stats['avg_sp_per_sprint'] > 0:
+            if stats['avg_sp_per_sprint'] <= 0:
+                continue
                 
-                # Sprinter'ın katıldığı sprintlerdeki gerçek pay oranını hesapla
-                total_percentage = 0
-                valid_sprints = 0
-                sprinter_sprint_details = {}
-                
-                # Her sprintte bu sprinter'ın gerçek SP'sini hesapla
-                for card in historical_cards:
-                    if not card or not isinstance(card, dict):
-                        continue
-                    
-                    # Sprinter kontrolü
-                    card_sprinter = self.extract_sprinter_from_custom_field(card)
-                    if not card_sprinter or card_sprinter == "FIELD_EMPTY":
-                        continue
-                    
-                    # Sprinter ID'sini normalize et
-                    card_sprinter_id = card_sprinter.lower().replace(' ', '_').replace('ç', 'c').replace('ğ', 'g').replace('ı', 'i').replace('ö', 'o').replace('ş', 's').replace('ü', 'u')
-                    
-                    if card_sprinter_id != member_id:
-                        continue
-                    
-                    # Sprint numarası
-                    sprint_num = self.extract_sprint_number_from_custom_field(card)
-                    if sprint_num is None:
-                        sprint_num = self.extract_sprint_number(card.get('name', ''))
-                    
-                    # Story point
-                    story_points = self.extract_story_points_from_custom_field(card)
-                    if story_points is None or story_points == 0:
-                        story_points = self.extract_story_points(card.get('name', ''))
-                    
-                    if sprint_num and story_points:
-                        if sprint_num not in sprinter_sprint_details:
-                            sprinter_sprint_details[sprint_num] = 0
-                        sprinter_sprint_details[sprint_num] += story_points
-                
-                # Pay oranlarını hesapla
-                for sprint_num, sprinter_sp in sprinter_sprint_details.items():
-                    if sprint_num in sprint_totals and sprint_totals[sprint_num] > 0:
-                        percentage = (sprinter_sp / sprint_totals[sprint_num]) * 100
-                        total_percentage += percentage
-                        valid_sprints += 1
-                
-                if valid_sprints > 0:
-                    avg_percentage = total_percentage / valid_sprints
-                else:
-                    # Fallback: Takımda eşit dağılım varsay
-                    team_size = len(member_stats)
-                    avg_percentage = 100 / team_size if team_size > 0 else 15
-                
-                # Yeni kapasite hesaplama
-                # Hedef: 21 SP'ye yaklaşmak için pay oranını artır
-                current_projected_sp = (avg_percentage / 100) * current_sprint_total_sp
-                
-                # Eğer çok düşükse hedef 21 SP'ye yaklaştır
-                if current_projected_sp < target_sp_per_person * 0.7:  # %70'inden azsa
-                    # Hedef SP'nin %80-90'ını öner (kademeli artış)
-                    target_factor = 0.85  # %85'ini hedefle
-                    suggested_sp = target_sp_per_person * target_factor
-                    
-                    # Ama çok dramatik artış olmasın
-                    max_increase = current_projected_sp * 1.3  # Maksimum %30 artış
-                    suggested_sp = min(suggested_sp, max_increase)
-                else:
-                    # Normal durumda mevcut pay oranını biraz artır
-                    growth_factor = 1.1  # %10 artış hedefle
-                    suggested_sp = current_projected_sp * growth_factor
-                    
-                    # Ama 21 SP'yi aşmasın
-                    suggested_sp = min(suggested_sp, target_sp_per_person)
-                
-                # Tamamlama oranını dikkate al
-                completion_adjustment = stats['completion_rate'] / 100
-                final_suggested_sp = suggested_sp * completion_adjustment
-                
-                base_suggestions[member_id] = {
-                    'name': stats['name'],
-                    'base_suggested_sp': round(final_suggested_sp, 1),
-                    'historical_avg': round(stats['avg_sp_per_sprint'], 1),
-                    'completion_rate': round(stats['completion_rate'], 1),
-                    'avg_percentage': round(avg_percentage, 1),
-                    'projected_sp': round(current_projected_sp, 1),
-                    'target_sp': target_sp_per_person
-                }
+            # Sprinter'ın sprint detaylarını hesapla
+            sprinter_sprint_details = self._calculate_sprinter_sprint_details(
+                member_id, historical_cards
+            )
+            
+            # Pay oranlarını hesapla
+            avg_percentage = self._calculate_average_percentage(
+                sprinter_sprint_details, sprint_totals, len(member_stats)
+            )
+            
+            # Mevcut sprint'te beklenen SP
+            current_projected_sp = (avg_percentage / 100) * current_sprint_total_sp
+            
+            # Gelişmiş kapasite hesaplama
+            suggested_sp = self._calculate_enhanced_capacity(
+                current_projected_sp=current_projected_sp,
+                historical_avg=stats['avg_sp_per_sprint'],
+                target_sp=target_sp,
+                completion_rate=stats['completion_rate'],
+                target_push_factor=target_push_factor,
+                capacity_growth_limit=capacity_growth_limit,
+                low_performer_boost=low_performer_boost,
+                min_sp_threshold=min_sp_threshold
+            )
+            
+            base_suggestions[member_id] = {
+                'name': stats['name'],
+                'base_suggested_sp': round(suggested_sp, 1),
+                'historical_avg': round(stats['avg_sp_per_sprint'], 1),
+                'completion_rate': round(stats['completion_rate'], 1),
+                'avg_percentage': round(avg_percentage, 1),
+                'projected_sp': round(current_projected_sp, 1),
+                'target_sp': target_sp
+            }
         
-        # Takım ortalaması hesapla (nöbetçi exception için)
-        if base_suggestions:
-            team_average_sp = sum([s['base_suggested_sp'] for s in base_suggestions.values()]) / len(base_suggestions)
-        else:
-            team_average_sp = 0
+        # Takım ortalaması hesapla
+        team_average_sp = (sum([s['base_suggested_sp'] for s in base_suggestions.values()]) / 
+                          len(base_suggestions)) if base_suggestions else 0
         
         # Exception'ları uygula
         for member_id, base_suggestion in base_suggestions.items():
@@ -721,7 +679,11 @@ class SprintAnalyzer:
             if sprinter_exceptions_manager:
                 # Exception'ları hesapla
                 adjustment_result = sprinter_exceptions_manager.calculate_adjusted_capacity(
-                    member_id, base_capacity, current_sprint_number, team_average_sp
+                    sprinter_id=member_id, 
+                    base_capacity=base_capacity, 
+                    sprint_number=current_sprint_number, 
+                    team_average_sp=team_average_sp, 
+                    sprint_working_days=sprint_working_days
                 )
                 
                 suggestions[member_id] = {
@@ -734,13 +696,11 @@ class SprintAnalyzer:
                     'projected_sp': base_suggestion['projected_sp'],
                     'target_sp': base_suggestion['target_sp'],
                     'adjustments': adjustment_result['adjustments'],
-                    'rationale': f"Geçmiş pay oranı: %{base_suggestion['avg_percentage']}, "
-                                f"Hedef SP: {base_suggestion['target_sp']}, "
-                                f"Tamamlama oranı: %{base_suggestion['completion_rate']}, "
-                                f"Exception'lar: {adjustment_result['explanation']}"
+                    'rationale': f"Gelişmiş algoritma: Hedef {base_suggestion['target_sp']} SP, "
+                                f"Geçmiş %{base_suggestion['avg_percentage']}, "
+                                f"Exception: {adjustment_result['explanation']}"
                 }
             else:
-                # Exception manager yoksa temel öneriyi kullan
                 suggestions[member_id] = {
                     'name': base_suggestion['name'],
                     'suggested_sp': round(base_capacity),
@@ -751,12 +711,113 @@ class SprintAnalyzer:
                     'projected_sp': base_suggestion['projected_sp'],
                     'target_sp': base_suggestion['target_sp'],
                     'adjustments': [],
-                    'rationale': f"Geçmiş pay oranı: %{base_suggestion['avg_percentage']}, "
-                                f"Hedef SP: {base_suggestion['target_sp']}, "
-                                f"Tamamlama oranı: %{base_suggestion['completion_rate']}"
+                    'rationale': f"Gelişmiş algoritma: Hedef {base_suggestion['target_sp']} SP, "
+                                f"Geçmiş %{base_suggestion['avg_percentage']}"
                 }
         
         return suggestions
+    
+    def _calculate_sprinter_sprint_details(self, member_id, historical_cards):
+        """Sprinter'ın sprint bazlı detaylarını hesapla"""
+        sprinter_sprint_details = {}
+        
+        for card in historical_cards or []:
+            if not card or not isinstance(card, dict):
+                continue
+            
+            # Sprinter kontrolü
+            card_sprinter = self.extract_sprinter_from_custom_field(card)
+            if not card_sprinter or card_sprinter == "FIELD_EMPTY":
+                continue
+            
+            # Sprinter ID'sini normalize et
+            card_sprinter_id = card_sprinter.lower().replace(' ', '_').replace('ç', 'c').replace('ğ', 'g').replace('ı', 'i').replace('ö', 'o').replace('ş', 's').replace('ü', 'u')
+            
+            if card_sprinter_id != member_id:
+                continue
+            
+            # Sprint numarası
+            sprint_num = self.extract_sprint_number_from_custom_field(card)
+            if sprint_num is None:
+                sprint_num = self.extract_sprint_number(card.get('name', ''))
+            
+            # Story point
+            story_points = self.extract_story_points_from_custom_field(card)
+            if story_points is None or story_points == 0:
+                story_points = self.extract_story_points(card.get('name', ''))
+            
+            if sprint_num and story_points:
+                if sprint_num not in sprinter_sprint_details:
+                    sprinter_sprint_details[sprint_num] = 0
+                sprinter_sprint_details[sprint_num] += story_points
+        
+        return sprinter_sprint_details
+    
+    def _calculate_average_percentage(self, sprinter_sprint_details, sprint_totals, team_size):
+        """Ortalama pay yüzdesini hesapla"""
+        total_percentage = 0
+        valid_sprints = 0
+        
+        for sprint_num, sprinter_sp in sprinter_sprint_details.items():
+            if sprint_num in sprint_totals and sprint_totals[sprint_num] > 0:
+                percentage = (sprinter_sp / sprint_totals[sprint_num]) * 100
+                total_percentage += percentage
+                valid_sprints += 1
+        
+        if valid_sprints > 0:
+            return total_percentage / valid_sprints
+        else:
+            # Fallback: Takımda eşit dağılım varsay
+            return 100 / team_size if team_size > 0 else 15
+    
+    def _calculate_enhanced_capacity(self, current_projected_sp, historical_avg, target_sp, 
+                                   completion_rate, target_push_factor, capacity_growth_limit,
+                                   low_performer_boost, min_sp_threshold):
+        """Gelişmiş kapasite hesaplama algoritması"""
+        
+        # Hedef mesafesi hesapla
+        target_distance = target_sp - current_projected_sp
+        
+        # Düşük performanslı mı?
+        is_low_performer = current_projected_sp < target_sp * 0.5
+        
+        if is_low_performer:
+            # Düşük performanslı için agresif artış
+            target_boost = target_distance * target_push_factor * low_performer_boost
+            suggested_sp = current_projected_sp + target_boost
+            
+            # Maksimum artış sınırı
+            max_growth = historical_avg * capacity_growth_limit
+            suggested_sp = min(suggested_sp, max_growth)
+            
+            # Hedefin %80'ini geçmesin (kademeli artış)
+            suggested_sp = min(suggested_sp, target_sp * 0.8)
+            
+        elif current_projected_sp < target_sp * 0.8:
+            # Orta seviye için dengeli artış
+            target_boost = target_distance * target_push_factor
+            suggested_sp = current_projected_sp + target_boost
+            
+            # Hedefin %90'ını geçmesin
+            suggested_sp = min(suggested_sp, target_sp * 0.9)
+            
+        else:
+            # Hedef civarında ise hafif artış
+            growth_factor = 1.05  # %5 artış
+            suggested_sp = current_projected_sp * growth_factor
+            
+            # Hedefi geçmesin
+            suggested_sp = min(suggested_sp, target_sp)
+        
+        # Tamamlama oranını uygula
+        completion_adjustment = completion_rate / 100
+        suggested_sp = suggested_sp * completion_adjustment
+        
+        # Minimum eşiği garantile
+        if suggested_sp > 0:
+            suggested_sp = max(suggested_sp, min_sp_threshold)
+        
+        return suggested_sp
 
 # Global değişkenler
 trello_oauth = None
@@ -768,6 +829,10 @@ sprinter_exceptions = SprinterExceptions()
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/dashboard')
+def dashboard():
+    return render_template('dashboard.html')
 
 @app.route('/check-auth', methods=['GET'])
 def check_auth():
@@ -1039,10 +1104,14 @@ def suggest_capacity():
         if not member_stats:
             return jsonify({'error': 'Üye istatistikleri oluşturulamadı'}), 400
         
+        # Sprint working days parametresini al
+        sprint_working_days = data.get('sprint_working_days', 5)
+        print(f"Debug - Received sprint_working_days: {sprint_working_days}")
+        
         # Kapasite önerileri yap (exception'lar dahil)
         suggestions = sprint_analyzer.suggest_capacity(
             member_stats, current_sprint_total, current_sprint_number, 
-            sprinter_exceptions, last_sprint_cards
+            sprinter_exceptions, last_sprint_cards, sprint_working_days
         )
         
         # Toplam önerilen SP'yi hesapla
