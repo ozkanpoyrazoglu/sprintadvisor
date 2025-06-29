@@ -42,6 +42,11 @@ class DashboardManager {
                 this.sprinters = data.sprinters;
                 this.capacityData = data.capacityData;
                 
+                // Load planning tasks if planning list ID is available
+                if (data.planningListId) {
+                    await this.loadPlanningTasks(data.planningListId);
+                }
+                
                 this.renderDashboard();
             } else {
                 // Redirect to setup if no data
@@ -50,6 +55,41 @@ class DashboardManager {
         } catch (error) {
             console.error('Error loading dashboard data:', error);
             this.showError('Failed to load sprint data. Please check your setup.');
+        }
+    }
+
+    async loadPlanningTasks(planningListId) {
+        try {
+            const response = await fetch('/get-planning-tasks', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    planning_list_id: planningListId
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // Add unique IDs and load into tasks array
+                data.tasks.forEach((task, index) => {
+                    task.id = `trello-${task.id}`;  // Prefix to avoid conflicts
+                    task.createdAt = new Date().toISOString();
+                });
+                
+                this.tasks = data.tasks;
+                this.taskIdCounter = this.tasks.length + 1;
+                
+                console.log(`Loaded ${data.tasks.length} planning tasks from Trello`);
+            } else {
+                console.error('Failed to load planning tasks:', data.error);
+                this.showError('Failed to load planning tasks: ' + data.error);
+            }
+        } catch (error) {
+            console.error('Error loading planning tasks:', error);
+            this.showError('Failed to load planning tasks from Trello.');
         }
     }
 
@@ -87,6 +127,9 @@ class DashboardManager {
         
         // Update capacity displays
         this.updateCapacityDisplays();
+        
+        // Render backlog with loaded tasks
+        this.renderBacklog();
         
         // Enable drag and drop
         if (window.sprintDragDrop) {
@@ -148,11 +191,13 @@ class DashboardManager {
                 <div class="task-meta">
                     <span class="task-sp">${task.sp} SP</span>
                     <span class="task-priority-text">${this.getPriorityText(task.priority)}</span>
+                    ${task.url ? `<a href="${task.url}" target="_blank" title="Open in Trello" style="color: #3182ce; text-decoration: none; margin-left: 8px;">🔗</a>` : ''}
                 </div>
                 ${type === 'assigned' ? `
                     <div class="task-actions">
                         <button class="task-action-btn" onclick="editTask('${task.id}')" title="Edit">✏️</button>
                         <button class="task-action-btn delete" onclick="deleteTask('${task.id}')" title="Delete">🗑️</button>
+                        ${task.url ? `<button class="task-action-btn" onclick="window.open('${task.url}', '_blank')" title="Open in Trello">🔗</button>` : ''}
                     </div>
                 ` : ''}
             </div>

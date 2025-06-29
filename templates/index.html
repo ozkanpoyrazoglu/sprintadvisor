@@ -430,6 +430,15 @@
                 <select id="archive_list">
                     <option value="">Liste seçin...</option>
                 </select>
+                <div class="help-text">Tamamlanmış sprintlerin bulunduğu liste (analiz için)</div>
+            </div>
+
+            <div class="form-group">
+                <label for="planning_list">Sprint Planning Listesi</label>
+                <select id="planning_list">
+                    <option value="">Liste seçin...</option>
+                </select>
+                <div class="help-text">Planlanacak yeni sprint'in task'larının bulunduğu liste</div>
             </div>
             
             <div class="form-group">
@@ -682,14 +691,26 @@
         }
 
         function populateLists(lists) {
-            const select = document.getElementById('archive_list');
-            select.innerHTML = '<option value="">Liste seçin...</option>';
+            // Populate Archive List dropdown
+            const archiveSelect = document.getElementById('archive_list');
+            archiveSelect.innerHTML = '<option value="">Liste seçin...</option>';
+            
+            // Populate Planning List dropdown
+            const planningSelect = document.getElementById('planning_list');
+            planningSelect.innerHTML = '<option value="">Liste seçin...</option>';
             
             lists.forEach(list => {
-                const option = document.createElement('option');
-                option.value = list.id;
-                option.textContent = list.name;
-                select.appendChild(option);
+                // Archive list option
+                const archiveOption = document.createElement('option');
+                archiveOption.value = list.id;
+                archiveOption.textContent = list.name;
+                archiveSelect.appendChild(archiveOption);
+                
+                // Planning list option
+                const planningOption = document.createElement('option');
+                planningOption.value = list.id;
+                planningOption.textContent = list.name;
+                planningSelect.appendChild(planningOption);
             });
         }
 
@@ -700,10 +721,16 @@
             }
 
             const archiveListId = document.getElementById('archive_list').value;
+            const planningListId = document.getElementById('planning_list').value;
             const currentSprintNumber = document.getElementById('current_sprint_number').value;
             
             if (!archiveListId) {
                 showAlert('analysis-result', 'ArchiveNew listesini seçin', 'error');
+                return;
+            }
+
+            if (!planningListId) {
+                showAlert('analysis-result', 'Sprint Planning listesini seçin', 'error');
                 return;
             }
 
@@ -912,6 +939,7 @@
                     // Store data for dashboard
                     const dashboardData = {
                         currentSprint: parseInt(document.getElementById('current_sprint_number').value),
+                        planningListId: document.getElementById('planning_list').value,
                         sprinters: Object.entries(data.suggestions).map(([id, suggestion]) => ({
                             id: id,
                             name: suggestion.name

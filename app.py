@@ -1089,6 +1089,66 @@ def analyze_performance():
         traceback.print_exc()
         return jsonify({'error': f'Analiz hatası: {str(e)}'}), 500
 
+@app.route('/get-planning-tasks', methods=['POST'])
+def get_planning_tasks():
+    """Planning listesindeki task'ları döndür"""
+    if not trello_api:
+        return jsonify({'error': 'Önce Trello ayarlarını yapın'}), 400
+    
+    data = request.json
+    planning_list_id = data.get('planning_list_id')
+    
+    if not planning_list_id:
+        return jsonify({'error': 'Planning list ID gerekli'}), 400
+    
+    try:
+        # Custom field'ları çek
+        custom_fields = trello_api.get_custom_fields()
+        
+        if not custom_fields:
+            return jsonify({'error': 'Board\'da custom field bulunamadı'}), 400
+        
+        # Board verilerini al
+        all_cards = trello_api.get_board_data()
+        
+        if not all_cards:
+            return jsonify({'error': 'Board\'da kart bulunamadı'}), 400
+        
+        # Planning listesindeki kartları filtrele
+        planning_cards = [card for card in all_cards if card.get('idList') == planning_list_id]
+        
+        # Her kart için SP ve diğer bilgileri çıkar
+        tasks = []
+        for card in planning_cards:
+            # Story point al
+            story_points = sprint_analyzer.extract_story_points_from_custom_field(card)
+            if story_points is None or story_points == 0:
+                story_points = sprint_analyzer.extract_story_points(card.get('name', ''))
+            
+            # Task objesi oluştur
+            task = {
+                'id': card.get('id'),
+                'title': card.get('name', ''),
+                'sp': story_points or 1,  # Default 1 SP
+                'priority': 'medium',  # Default priority
+                'description': card.get('desc', ''),
+                'url': card.get('url', ''),
+                'assignedTo': None
+            }
+            tasks.append(task)
+        
+        return jsonify({
+            'success': True,
+            'tasks': tasks,
+            'count': len(tasks)
+        })
+        
+    except Exception as e:
+        print(f"❌ Planning task'ları alma hatası: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Planning task hatası: {str(e)}'}), 500
+
 @app.route('/get-available-sprints', methods=['POST'])
 def get_available_sprints():
     """Mevcut sprintlerin listesini döndür"""
