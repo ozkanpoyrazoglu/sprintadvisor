@@ -6,6 +6,8 @@ import re
 from collections import defaultdict
 from requests_oauthlib import OAuth1Session
 import os
+from token_storage import TokenStorage
+from sprinter_exceptions import SprinterExceptions
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here-2025'  # Gerçek uygulamada güvenli bir key kullanın
@@ -575,26 +577,183 @@ class SprintAnalyzer:
         
         return dict(member_stats)
     
-    def suggest_capacity(self, member_stats, current_sprint_total_sp, adjustment_factor=0.9):
-        """Mevcut sprint için kapasite önerisi yap"""
-        suggestions = {}
+    def calculate_historical_sprint_totals(self, cards):
+        """Geçmiş sprintlerin toplam SP'lerini hesapla"""
+        sprint_totals = defaultdict(int)
         
+        for card in cards:
+            if not card or not isinstance(card, dict):
+                continue
+            
+            # Sprint numarasını al
+            sprint_num = self.extract_sprint_number_from_custom_field(card)
+            if sprint_num is None:
+                sprint_num = self.extract_sprint_number(card.get('name', ''))
+            
+            # Story point al
+            story_points = self.extract_story_points_from_custom_field(card)
+            if story_points is None or story_points == 0:
+                story_points = self.extract_story_points(card.get('name', ''))
+            
+            if sprint_num and story_points:
+                sprint_totals[sprint_num] += story_points
+        
+        return dict(sprint_totals)
+
+    def suggest_capacity(self, member_stats, current_sprint_total_sp, current_sprint_number, 
+                       sprinter_exceptions_manager=None, historical_cards=None, target_sp_per_person=21):
+        """
+        Mevcut sprint için kapasite önerisi yap (yeni algoritma)
+        
+        Algoritma:
+        1. Geçmiş sprintlerdeki toplam SP'leri hesapla
+        2. Her sprinter'ın aldığı pay oranını hesapla
+        3. Hedef 21 SP'ye göre yeni kapasiteyi belirle
+        4. Exception'ları uygula
+        """
+        suggestions = {}
+        base_suggestions = {}
+        
+        # Geçmiş sprint totalleri hesapla
+        sprint_totals = {}
+        if historical_cards:
+            sprint_totals = self.calculate_historical_sprint_totals(historical_cards)
+        
+        # Her sprinter için temel kapasiteyi hesapla
         for member_id, stats in member_stats.items():
             if stats['avg_sp_per_sprint'] > 0:
-                # Geçmiş ortalamayı baz al, tamamlama oranını dikkate al
-                base_capacity = stats['avg_sp_per_sprint']
+                
+                # Sprinter'ın katıldığı sprintlerdeki gerçek pay oranını hesapla
+                total_percentage = 0
+                valid_sprints = 0
+                sprinter_sprint_details = {}
+                
+                # Her sprintte bu sprinter'ın gerçek SP'sini hesapla
+                for card in historical_cards:
+                    if not card or not isinstance(card, dict):
+                        continue
+                    
+                    # Sprinter kontrolü
+                    card_sprinter = self.extract_sprinter_from_custom_field(card)
+                    if not card_sprinter or card_sprinter == "FIELD_EMPTY":
+                        continue
+                    
+                    # Sprinter ID'sini normalize et
+                    card_sprinter_id = card_sprinter.lower().replace(' ', '_').replace('ç', 'c').replace('ğ', 'g').replace('ı', 'i').replace('ö', 'o').replace('ş', 's').replace('ü', 'u')
+                    
+                    if card_sprinter_id != member_id:
+                        continue
+                    
+                    # Sprint numarası
+                    sprint_num = self.extract_sprint_number_from_custom_field(card)
+                    if sprint_num is None:
+                        sprint_num = self.extract_sprint_number(card.get('name', ''))
+                    
+                    # Story point
+                    story_points = self.extract_story_points_from_custom_field(card)
+                    if story_points is None or story_points == 0:
+                        story_points = self.extract_story_points(card.get('name', ''))
+                    
+                    if sprint_num and story_points:
+                        if sprint_num not in sprinter_sprint_details:
+                            sprinter_sprint_details[sprint_num] = 0
+                        sprinter_sprint_details[sprint_num] += story_points
+                
+                # Pay oranlarını hesapla
+                for sprint_num, sprinter_sp in sprinter_sprint_details.items():
+                    if sprint_num in sprint_totals and sprint_totals[sprint_num] > 0:
+                        percentage = (sprinter_sp / sprint_totals[sprint_num]) * 100
+                        total_percentage += percentage
+                        valid_sprints += 1
+                
+                if valid_sprints > 0:
+                    avg_percentage = total_percentage / valid_sprints
+                else:
+                    # Fallback: Takımda eşit dağılım varsay
+                    team_size = len(member_stats)
+                    avg_percentage = 100 / team_size if team_size > 0 else 15
+                
+                # Yeni kapasite hesaplama
+                # Hedef: 21 SP'ye yaklaşmak için pay oranını artır
+                current_projected_sp = (avg_percentage / 100) * current_sprint_total_sp
+                
+                # Eğer çok düşükse hedef 21 SP'ye yaklaştır
+                if current_projected_sp < target_sp_per_person * 0.7:  # %70'inden azsa
+                    # Hedef SP'nin %80-90'ını öner (kademeli artış)
+                    target_factor = 0.85  # %85'ini hedefle
+                    suggested_sp = target_sp_per_person * target_factor
+                    
+                    # Ama çok dramatik artış olmasın
+                    max_increase = current_projected_sp * 1.3  # Maksimum %30 artış
+                    suggested_sp = min(suggested_sp, max_increase)
+                else:
+                    # Normal durumda mevcut pay oranını biraz artır
+                    growth_factor = 1.1  # %10 artış hedefle
+                    suggested_sp = current_projected_sp * growth_factor
+                    
+                    # Ama 21 SP'yi aşmasın
+                    suggested_sp = min(suggested_sp, target_sp_per_person)
+                
+                # Tamamlama oranını dikkate al
                 completion_adjustment = stats['completion_rate'] / 100
+                final_suggested_sp = suggested_sp * completion_adjustment
                 
-                # Önerilen kapasite
-                suggested_capacity = base_capacity * completion_adjustment * adjustment_factor
-                
-                suggestions[member_id] = {
+                base_suggestions[member_id] = {
                     'name': stats['name'],
-                    'suggested_sp': round(suggested_capacity),
+                    'base_suggested_sp': round(final_suggested_sp, 1),
                     'historical_avg': round(stats['avg_sp_per_sprint'], 1),
                     'completion_rate': round(stats['completion_rate'], 1),
-                    'rationale': f"Geçmiş ortalama: {round(stats['avg_sp_per_sprint'], 1)} SP, "
-                                f"Tamamlama oranı: %{round(stats['completion_rate'], 1)}"
+                    'avg_percentage': round(avg_percentage, 1),
+                    'projected_sp': round(current_projected_sp, 1),
+                    'target_sp': target_sp_per_person
+                }
+        
+        # Takım ortalaması hesapla (nöbetçi exception için)
+        if base_suggestions:
+            team_average_sp = sum([s['base_suggested_sp'] for s in base_suggestions.values()]) / len(base_suggestions)
+        else:
+            team_average_sp = 0
+        
+        # Exception'ları uygula
+        for member_id, base_suggestion in base_suggestions.items():
+            base_capacity = base_suggestion['base_suggested_sp']
+            
+            if sprinter_exceptions_manager:
+                # Exception'ları hesapla
+                adjustment_result = sprinter_exceptions_manager.calculate_adjusted_capacity(
+                    member_id, base_capacity, current_sprint_number, team_average_sp
+                )
+                
+                suggestions[member_id] = {
+                    'name': base_suggestion['name'],
+                    'suggested_sp': round(adjustment_result['adjusted_sp']),
+                    'base_suggested_sp': round(adjustment_result['original_sp'], 1),
+                    'historical_avg': base_suggestion['historical_avg'],
+                    'completion_rate': base_suggestion['completion_rate'],
+                    'avg_percentage': base_suggestion['avg_percentage'],
+                    'projected_sp': base_suggestion['projected_sp'],
+                    'target_sp': base_suggestion['target_sp'],
+                    'adjustments': adjustment_result['adjustments'],
+                    'rationale': f"Geçmiş pay oranı: %{base_suggestion['avg_percentage']}, "
+                                f"Hedef SP: {base_suggestion['target_sp']}, "
+                                f"Tamamlama oranı: %{base_suggestion['completion_rate']}, "
+                                f"Exception'lar: {adjustment_result['explanation']}"
+                }
+            else:
+                # Exception manager yoksa temel öneriyi kullan
+                suggestions[member_id] = {
+                    'name': base_suggestion['name'],
+                    'suggested_sp': round(base_capacity),
+                    'base_suggested_sp': round(base_capacity, 1),
+                    'historical_avg': base_suggestion['historical_avg'],
+                    'completion_rate': base_suggestion['completion_rate'],
+                    'avg_percentage': base_suggestion['avg_percentage'],
+                    'projected_sp': base_suggestion['projected_sp'],
+                    'target_sp': base_suggestion['target_sp'],
+                    'adjustments': [],
+                    'rationale': f"Geçmiş pay oranı: %{base_suggestion['avg_percentage']}, "
+                                f"Hedef SP: {base_suggestion['target_sp']}, "
+                                f"Tamamlama oranı: %{base_suggestion['completion_rate']}"
                 }
         
         return suggestions
@@ -603,10 +762,60 @@ class SprintAnalyzer:
 trello_oauth = None
 trello_api = None
 sprint_analyzer = SprintAnalyzer()
+token_storage = TokenStorage()
+sprinter_exceptions = SprinterExceptions()
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/check-auth', methods=['GET'])
+def check_auth():
+    """Mevcut authentication durumunu kontrol et"""
+    global trello_api
+    
+    try:
+        # Stored token'ları kontrol et
+        token_data = token_storage.load_tokens()
+        
+        if not token_data:
+            return jsonify({
+                'authenticated': False,
+                'message': 'Kayıtlı token bulunamadı'
+            })
+        
+        # TrelloAPI instance'ını oluştur ve test et
+        api_key = token_data['api_key']
+        access_token = token_data['access_token']
+        access_token_secret = token_data['access_token_secret']
+        board_id = token_data.get('board_id')
+        
+        if board_id:
+            # Board ID varsa API bağlantısını test et
+            trello_api = TrelloAPI(api_key, access_token, access_token_secret, board_id)
+            lists = trello_api.get_lists()
+            
+            if lists:
+                return jsonify({
+                    'authenticated': True,
+                    'board_connected': True,
+                    'board_id': board_id,
+                    'lists': [{'id': lst['id'], 'name': lst['name']} for lst in lists],
+                    'message': 'Trello bağlantısı aktif'
+                })
+        
+        return jsonify({
+            'authenticated': True,
+            'board_connected': False,
+            'message': 'OAuth token mevcut, board ID gerekli'
+        })
+        
+    except Exception as e:
+        print(f"Auth check hatası: {e}")
+        return jsonify({
+            'authenticated': False,
+            'message': f'Bağlantı testi başarısız: {str(e)}'
+        })
 
 @app.route('/auth/setup', methods=['POST'])
 def setup_oauth():
@@ -660,6 +869,13 @@ def oauth_callback():
             session['access_token_secret'] = tokens['oauth_token_secret']
             session['api_key'] = trello_oauth.api_key
             
+            # Token'ları persistent storage'a kaydet
+            token_storage.save_tokens(
+                api_key=trello_oauth.api_key,
+                access_token=tokens['oauth_token'],
+                access_token_secret=tokens['oauth_token_secret']
+            )
+            
             return redirect('/?auth=success')
         else:
             return redirect('/?auth=error')
@@ -673,13 +889,25 @@ def setup_trello():
     """Trello board ayarlarını yap"""
     global trello_api
     
-    # OAuth token'ları kontrol et
-    if not all([
-        session.get('access_token'),
-        session.get('access_token_secret'),
-        session.get('api_key')
-    ]):
-        return jsonify({'error': 'Önce OAuth authentication yapın'}), 400
+    # OAuth token'ları kontrol et (önce session, sonra storage)
+    api_key = session.get('api_key')
+    access_token = session.get('access_token')
+    access_token_secret = session.get('access_token_secret')
+    
+    # Session'da yoksa storage'dan yükle
+    if not all([api_key, access_token, access_token_secret]):
+        token_data = token_storage.load_tokens()
+        if token_data:
+            api_key = token_data['api_key']
+            access_token = token_data['access_token']
+            access_token_secret = token_data['access_token_secret']
+            
+            # Session'ı güncelle
+            session['api_key'] = api_key
+            session['access_token'] = access_token
+            session['access_token_secret'] = access_token_secret
+        else:
+            return jsonify({'error': 'Önce OAuth authentication yapın'}), 400
     
     data = request.json
     board_id = data.get('board_id')
@@ -688,11 +916,6 @@ def setup_trello():
         return jsonify({'error': 'Board ID gerekli'}), 400
     
     try:
-        # Debug: Parametreleri kontrol et
-        api_key = session.get('api_key')
-        access_token = session.get('access_token')
-        access_token_secret = session.get('access_token_secret')
-        
         print(f"Debug - API Key: {api_key is not None}")
         print(f"Debug - Access Token: {access_token is not None}")
         print(f"Debug - Access Token Secret: {access_token_secret is not None}")
@@ -703,6 +926,10 @@ def setup_trello():
         
         # Bağlantıyı test et
         lists = trello_api.get_lists()
+        
+        # Board ID'yi storage'a kaydet
+        token_storage.update_board_id(board_id)
+        
         return jsonify({
             'success': True,
             'message': 'Trello bağlantısı başarılı',
@@ -812,8 +1039,11 @@ def suggest_capacity():
         if not member_stats:
             return jsonify({'error': 'Üye istatistikleri oluşturulamadı'}), 400
         
-        # Kapasite önerileri yap
-        suggestions = sprint_analyzer.suggest_capacity(member_stats, current_sprint_total)
+        # Kapasite önerileri yap (exception'lar dahil)
+        suggestions = sprint_analyzer.suggest_capacity(
+            member_stats, current_sprint_total, current_sprint_number, 
+            sprinter_exceptions, last_sprint_cards
+        )
         
         # Toplam önerilen SP'yi hesapla
         total_suggested = sum([s['suggested_sp'] for s in suggestions.values()])
@@ -833,6 +1063,107 @@ def suggest_capacity():
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'Öneri hatası: {str(e)}'}), 500
+
+@app.route('/get-sprinters', methods=['POST'])
+def get_sprinters():
+    """Analiz sonucundaki sprinter listesini döndür"""
+    if not trello_api:
+        return jsonify({'error': 'Önce Trello ayarlarını yapın'}), 400
+    
+    data = request.json
+    archive_list_id = data.get('archive_list_id')
+    current_sprint_number = data.get('current_sprint_number')
+    
+    if not archive_list_id or not current_sprint_number:
+        return jsonify({'error': 'ArchiveNew list ID ve mevcut sprint numarası gerekli'}), 400
+    
+    try:
+        # Custom field'ları çek
+        custom_fields = trello_api.get_custom_fields()
+        if not custom_fields:
+            return jsonify({'error': 'Board\'da custom field bulunamadı'}), 400
+        
+        # Analiz verilerini al
+        all_cards = trello_api.get_board_data()
+        if not all_cards:
+            return jsonify({'error': 'Board\'da kart bulunamadı'}), 400
+        
+        last_sprint_cards, sprint_numbers = sprint_analyzer.get_last_3_sprints(
+            all_cards, archive_list_id, current_sprint_number, custom_fields
+        )
+        
+        if not last_sprint_cards:
+            return jsonify({'error': 'Analiz edilecek sprint kartı bulunamadı'}), 400
+            
+        member_stats = sprint_analyzer.analyze_member_performance(last_sprint_cards)
+        
+        if not member_stats:
+            return jsonify({'error': 'Üye istatistikleri oluşturulamadı'}), 400
+        
+        # Sprinter listesini hazırla
+        sprinters = []
+        for member_id, stats in member_stats.items():
+            sprinters.append({
+                'id': member_id,
+                'name': stats['name']
+            })
+        
+        return jsonify({
+            'success': True,
+            'sprinters': sprinters,
+            'total_sprinters': len(sprinters)
+        })
+    
+    except Exception as e:
+        print(f"❌ Sprinter listesi hatası: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Sprinter listesi hatası: {str(e)}'}), 500
+
+@app.route('/save-exceptions', methods=['POST'])
+def save_exceptions():
+    """Sprinter exception'larını kaydet"""
+    try:
+        data = request.json
+        sprint_number = data.get('sprint_number')
+        exceptions = data.get('exceptions', {})
+        
+        if not sprint_number:
+            return jsonify({'error': 'Sprint numarası gerekli'}), 400
+        
+        # Exception'ları kaydet
+        success = sprinter_exceptions.save_exceptions(sprint_number, exceptions)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Sprint {sprint_number} exception\'ları kaydedildi',
+                'sprint_number': sprint_number,
+                'total_exceptions': len([k for k, v in exceptions.items() if any(v.values())])
+            })
+        else:
+            return jsonify({'error': 'Exception\'lar kaydedilemedi'}), 500
+    
+    except Exception as e:
+        print(f"❌ Exception kaydetme hatası: {e}")
+        return jsonify({'error': f'Exception kaydetme hatası: {str(e)}'}), 500
+
+@app.route('/get-exceptions/<int:sprint_number>', methods=['GET'])
+def get_exceptions(sprint_number):
+    """Belirli bir sprint için exception'ları getir"""
+    try:
+        exceptions = sprinter_exceptions.load_exceptions(sprint_number)
+        
+        return jsonify({
+            'success': True,
+            'sprint_number': sprint_number,
+            'exceptions': exceptions,
+            'has_exceptions': bool(exceptions)
+        })
+    
+    except Exception as e:
+        print(f"❌ Exception getirme hatası: {e}")
+        return jsonify({'error': f'Exception getirme hatası: {str(e)}'}), 500
 
 if __name__ == '__main__':
     # Not: pip install requests-oauthlib komutu ile OAuth kütüphanesini yükleyin

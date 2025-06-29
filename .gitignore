@@ -1,0 +1,4 @@
+venv/
+.sprinter_exceptions.json
+.trello_tokens.json
+__pycache__/

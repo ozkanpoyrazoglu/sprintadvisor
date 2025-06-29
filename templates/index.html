@@ -231,6 +231,60 @@
             font-style: italic;
         }
 
+        .exception-item {
+            background-color: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+
+        .exception-name {
+            font-size: 16px;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 12px;
+        }
+
+        .exception-controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+            margin: 0;
+        }
+
+        .checkbox-group label {
+            margin: 0;
+            font-size: 14px;
+            color: #4a5568;
+        }
+
+        .vacation-input {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .vacation-input input[type="number"] {
+            width: 80px;
+            padding: 8px 12px;
+        }
+
+        .vacation-input span {
+            font-size: 14px;
+            color: #718096;
+        }
+
         .summary {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -388,10 +442,33 @@
             <div id="analysis-result"></div>
         </div>
 
-        <!-- Step 3: Capacity Planning -->
+        <!-- Step 3: Sprinter Exceptions -->
         <div class="card hidden" id="step3">
             <div class="step-indicator">
                 <div class="step-number">3</div>
+                <div class="step-text">Sprinter Exception'ları</div>
+            </div>
+            
+            <div class="form-group">
+                <label for="exception_sprint_number">Exception Sprint Numarası</label>
+                <input type="number" id="exception_sprint_number" placeholder="240" min="1">
+                <div class="help-text">Exception'ları tanımlayacağınız sprint numarası</div>
+            </div>
+            
+            <div id="sprinter-exceptions-container" class="hidden">
+                <h4 style="margin-bottom: 16px; color: #2d3748;">Sprinter Exception'ları</h4>
+                <div id="exceptions-list"></div>
+                <button onclick="saveExceptions()" style="margin-top: 20px;">Exception'ları Kaydet</button>
+            </div>
+            
+            <button onclick="loadSprintersForExceptions()">Sprinter'ları Yükle</button>
+            <div id="exceptions-result"></div>
+        </div>
+
+        <!-- Step 4: Capacity Planning -->
+        <div class="card hidden" id="step4">
+            <div class="step-indicator">
+                <div class="step-number">4</div>
                 <div class="step-text">Kapasite Planlaması</div>
             </div>
             
@@ -413,6 +490,7 @@
 
         window.addEventListener('DOMContentLoaded', function() {
             checkAuthStatus();
+            checkExistingAuth();
         });
 
         function checkAuthStatus() {
@@ -428,6 +506,28 @@
             }
         }
 
+        async function checkExistingAuth() {
+            try {
+                const response = await fetch('/check-auth');
+                const data = await response.json();
+                
+                if (data.authenticated) {
+                    oauthCompleted = true;
+                    
+                    if (data.board_connected) {
+                        // Tam bağlantı var - direkt step 2'ye geç
+                        showBoardConnected(data);
+                        trelloConnected = true;
+                    } else {
+                        // OAuth var ama board ID yok
+                        showAuthSuccess();
+                    }
+                }
+            } catch (error) {
+                console.log('Mevcut auth kontrolü başarısız:', error.message);
+            }
+        }
+        
         function showAuthSuccess() {
             document.getElementById('oauth-setup').classList.add('hidden');
             document.getElementById('board-setup').classList.remove('hidden');
@@ -440,6 +540,26 @@
             authStatus.innerHTML = '<div class="alert alert-success">OAuth authentication başarılı. Board ID\'nizi girin.</div>';
             
             oauthCompleted = true;
+        }
+        
+        function showBoardConnected(data) {
+            // Step 1'i tamamlanmış olarak işaretle
+            document.getElementById('oauth-setup').classList.add('hidden');
+            document.getElementById('board-setup').classList.add('hidden');
+            
+            const stepNumbers = document.querySelectorAll('.step-number');
+            stepNumbers[0].classList.add('completed');
+            
+            const authStatus = document.getElementById('auth-status');
+            authStatus.classList.remove('hidden');
+            authStatus.innerHTML = `<div class="alert alert-success">Trello bağlantısı aktif (Board ID: ${data.board_id})</div>`;
+            
+            // Step 2'yi göster ve listleri doldur
+            populateLists(data.lists);
+            document.getElementById('step2').classList.remove('hidden');
+            
+            oauthCompleted = true;
+            trelloConnected = true;
         }
 
         async function startOAuth() {
@@ -582,6 +702,9 @@
                     displayMemberStats(data.member_stats, data.sprint_numbers);
                     document.getElementById('step3').classList.remove('hidden');
                     
+                    // Set exception sprint number to current sprint
+                    document.getElementById('exception_sprint_number').value = parseInt(currentSprintNumber);
+                    
                     // Mark step 2 as completed
                     const stepNumbers = document.querySelectorAll('.step-number');
                     stepNumbers[1].classList.add('completed');
@@ -631,9 +754,9 @@
                     showAlert('suggestion-result', 'Kapasite önerileri hazırlandı', 'success');
                     displaySuggestions(data);
                     
-                    // Mark step 3 as completed
+                    // Mark step 4 as completed
                     const stepNumbers = document.querySelectorAll('.step-number');
-                    stepNumbers[2].classList.add('completed');
+                    stepNumbers[3].classList.add('completed');
                 } else {
                     showAlert('suggestion-result', data.error, 'error');
                 }
@@ -703,14 +826,22 @@
                                 <div class="stat-label">Önerilen SP</div>
                             </div>
                             <div class="stat-item">
-                                <span class="stat-value">${suggestion.historical_avg}</span>
-                                <div class="stat-label">Geçmiş Ortalama</div>
+                                <span class="stat-value">${suggestion.avg_percentage ? suggestion.avg_percentage + '%' : 'N/A'}</span>
+                                <div class="stat-label">Geçmiş Pay Oranı</div>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value">${suggestion.target_sp || 21}</span>
+                                <div class="stat-label">Hedef SP</div>
                             </div>
                             <div class="stat-item">
                                 <span class="stat-value">${suggestion.completion_rate}%</span>
                                 <div class="stat-label">Tamamlama Oranı</div>
                             </div>
                         </div>
+                        ${suggestion.adjustments && suggestion.adjustments.length > 0 ? 
+                            `<div style="background: #fef5e7; border: 1px solid #f6ad55; border-radius: 4px; padding: 8px; margin-top: 8px; font-size: 12px;">
+                                <strong>Exception'lar:</strong> ${suggestion.adjustments.join(', ')}
+                            </div>` : ''}
                         <div class="rationale">${suggestion.rationale}</div>
                     </div>
                 `;
@@ -737,6 +868,188 @@
         function showAlert(elementId, message, type) {
             const element = document.getElementById(elementId);
             element.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+        }
+
+        async function loadSprintersForExceptions() {
+            if (!analysisCompleted) {
+                showAlert('exceptions-result', 'Önce performans analizi yapın', 'error');
+                return;
+            }
+
+            const sprintNumber = document.getElementById('exception_sprint_number').value;
+            if (!sprintNumber) {
+                showAlert('exceptions-result', 'Sprint numarası girin', 'error');
+                return;
+            }
+
+            showLoading('exceptions-result');
+
+            try {
+                // Get sprinters from analysis result
+                const archiveListId = document.getElementById('archive_list').value;
+                const currentSprintNumber = document.getElementById('current_sprint_number').value;
+
+                const response = await fetch('/get-sprinters', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        archive_list_id: archiveListId,
+                        current_sprint_number: parseInt(currentSprintNumber)
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert('exceptions-result', `${data.sprinters.length} sprinter yüklendi`, 'success');
+                    displayExceptionControls(data.sprinters, parseInt(sprintNumber));
+                    document.getElementById('sprinter-exceptions-container').classList.remove('hidden');
+                } else {
+                    showAlert('exceptions-result', data.error, 'error');
+                }
+            } catch (error) {
+                showAlert('exceptions-result', 'Sprinter yükleme hatası: ' + error.message, 'error');
+            }
+        }
+
+        function displayExceptionControls(sprinters, sprintNumber) {
+            const container = document.getElementById('exceptions-list');
+            let html = '';
+
+            sprinters.forEach(sprinter => {
+                html += `
+                    <div class="exception-item">
+                        <div class="exception-name">${sprinter.name}</div>
+                        <div class="exception-controls">
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="customer_${sprinter.id}" data-sprinter="${sprinter.id}">
+                                <label for="customer_${sprinter.id}">Müşteri Dedikesi</label>
+                            </div>
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="oncall_${sprinter.id}" data-sprinter="${sprinter.id}">
+                                <label for="oncall_${sprinter.id}">Nöbetçi</label>
+                            </div>
+                            <div class="vacation-input">
+                                <label for="vacation_${sprinter.id}">İzin:</label>
+                                <input type="number" id="vacation_${sprinter.id}" data-sprinter="${sprinter.id}" 
+                                       min="0" max="10" placeholder="0">
+                                <span>gün</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+
+            // Load existing exceptions for this sprint
+            loadExistingExceptions(sprintNumber);
+        }
+
+        async function loadExistingExceptions(sprintNumber) {
+            try {
+                const response = await fetch(`/get-exceptions/${sprintNumber}`);
+                const data = await response.json();
+
+                if (data.success && data.exceptions) {
+                    // Fill form with existing data
+                    Object.entries(data.exceptions).forEach(([sprinterId, exceptions]) => {
+                        if (exceptions.customer_delegate) {
+                            const checkbox = document.getElementById(`customer_${sprinterId}`);
+                            if (checkbox) checkbox.checked = true;
+                        }
+                        if (exceptions.on_call) {
+                            const checkbox = document.getElementById(`oncall_${sprinterId}`);
+                            if (checkbox) checkbox.checked = true;
+                        }
+                        if (exceptions.vacation_days > 0) {
+                            const input = document.getElementById(`vacation_${sprinterId}`);
+                            if (input) input.value = exceptions.vacation_days;
+                        }
+                    });
+                }
+            } catch (error) {
+                console.log('Mevcut exception\'lar yüklenemedi:', error.message);
+            }
+        }
+
+        async function saveExceptions() {
+            const sprintNumber = document.getElementById('exception_sprint_number').value;
+            if (!sprintNumber) {
+                showAlert('exceptions-result', 'Sprint numarası girin', 'error');
+                return;
+            }
+
+            // Collect exceptions data
+            const exceptions = {};
+            const checkboxes = document.querySelectorAll('#exceptions-list input[type="checkbox"]');
+            const vacationInputs = document.querySelectorAll('#exceptions-list input[type="number"]');
+
+            // Process checkboxes
+            checkboxes.forEach(checkbox => {
+                const sprinterId = checkbox.dataset.sprinter;
+                if (!exceptions[sprinterId]) {
+                    exceptions[sprinterId] = {
+                        customer_delegate: false,
+                        on_call: false,
+                        vacation_days: 0
+                    };
+                }
+
+                if (checkbox.id.startsWith('customer_') && checkbox.checked) {
+                    exceptions[sprinterId].customer_delegate = true;
+                } else if (checkbox.id.startsWith('oncall_') && checkbox.checked) {
+                    exceptions[sprinterId].on_call = true;
+                }
+            });
+
+            // Process vacation inputs
+            vacationInputs.forEach(input => {
+                const sprinterId = input.dataset.sprinter;
+                const days = parseInt(input.value) || 0;
+                
+                if (!exceptions[sprinterId]) {
+                    exceptions[sprinterId] = {
+                        customer_delegate: false,
+                        on_call: false,
+                        vacation_days: days
+                    };
+                } else {
+                    exceptions[sprinterId].vacation_days = days;
+                }
+            });
+
+            showLoading('exceptions-result');
+
+            try {
+                const response = await fetch('/save-exceptions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        sprint_number: parseInt(sprintNumber),
+                        exceptions: exceptions
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert('exceptions-result', 'Exception\'lar başarıyla kaydedildi', 'success');
+                    document.getElementById('step4').classList.remove('hidden');
+                    
+                    // Mark step 3 as completed
+                    const stepNumbers = document.querySelectorAll('.step-number');
+                    stepNumbers[2].classList.add('completed');
+                } else {
+                    showAlert('exceptions-result', data.error, 'error');
+                }
+            } catch (error) {
+                showAlert('exceptions-result', 'Exception kaydetme hatası: ' + error.message, 'error');
+            }
         }
 
         function showLoading(elementId) {
