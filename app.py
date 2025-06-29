@@ -721,6 +721,7 @@ class SprintAnalyzer:
                     'avg_percentage': base_suggestion['avg_percentage'],
                     'projected_sp': base_suggestion['projected_sp'],
                     'target_sp': base_suggestion['target_sp'],
+                    'target_sp_per_person': target_sp,  # Company standard for target utilization
                     'adjustments': adjustment_result['adjustments'],
                     'rationale': f"Gelişmiş algoritma: Hedef {base_suggestion['target_sp']} SP, "
                                 f"Geçmiş %{base_suggestion['avg_percentage']}, "
@@ -736,6 +737,7 @@ class SprintAnalyzer:
                     'avg_percentage': base_suggestion['avg_percentage'],
                     'projected_sp': base_suggestion['projected_sp'],
                     'target_sp': base_suggestion['target_sp'],
+                    'target_sp_per_person': target_sp,  # Company standard for target utilization
                     'adjustments': [],
                     'rationale': f"Gelişmiş algoritma: Hedef {base_suggestion['target_sp']} SP, "
                                 f"Geçmiş %{base_suggestion['avg_percentage']}"
@@ -795,6 +797,18 @@ class SprintAnalyzer:
         else:
             # Fallback: Takımda eşit dağılım varsay
             return 100 / team_size if team_size > 0 else 15
+    
+    def _calculate_real_utilization(self, assigned_sp, suggested_sp):
+        """Calculate real utilization based on current assignments vs suggested capacity"""
+        if suggested_sp <= 0:
+            return 0
+        return (assigned_sp / suggested_sp) * 100
+    
+    def _calculate_target_utilization(self, assigned_sp, target_sp_per_person=21):
+        """Calculate target utilization based on company standard (21 SP per person = 100%)"""
+        if target_sp_per_person <= 0:
+            return 0
+        return (assigned_sp / target_sp_per_person) * 100
     
     def _calculate_enhanced_capacity(self, current_projected_sp, historical_avg, target_sp, 
                                    completion_rate, target_push_factor, capacity_growth_limit,

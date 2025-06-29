@@ -435,10 +435,11 @@
 
             <div class="form-group">
                 <label for="planning_list">Sprint Planning Listesi</label>
-                <select id="planning_list">
+                <select id="planning_list" onchange="calculatePlanningListTotalSP()">
                     <option value="">Liste seçin...</option>
                 </select>
                 <div class="help-text">Planlanacak yeni sprint'in task'larının bulunduğu liste</div>
+                <div id="planning-list-sp-result"></div>
             </div>
             
             <div class="form-group">
@@ -484,7 +485,9 @@
             <div class="form-group">
                 <label for="current_sprint_total">Mevcut Sprint Toplam Story Point</label>
                 <input type="number" id="current_sprint_total" placeholder="45" min="0">
-                <div class="help-text">Planlamayı yaptığınız sprintin toplam story point değeri</div>
+                <div class="help-text">
+                    📊 Sprint Planning Listesi seçildiğinde otomatik hesaplanır. Manuel olarak da değiştirebilirsiniz.
+                </div>
             </div>
             
             <div class="form-group">
@@ -1041,6 +1044,10 @@
                                 <span class="stat-value">${suggestion.completion_rate}%</span>
                                 <div class="stat-label">Tamamlama Oranı</div>
                             </div>
+                            <div class="stat-item">
+                                <span class="stat-value">H:${Math.round((suggestion.suggested_sp / (suggestion.target_sp_per_person || 21)) * 100)}%</span>
+                                <div class="stat-label">Hedef Kullanım</div>
+                            </div>
                         </div>
                         ${suggestion.adjustments && suggestion.adjustments.length > 0 ? 
                             `<div style="background: #fef5e7; border: 1px solid #f6ad55; border-radius: 4px; padding: 8px; margin-top: 8px; font-size: 12px;">
@@ -1299,6 +1306,59 @@
 
         function goToDashboard() {
             window.location.href = '/dashboard';
+        }
+
+        // Otomatik SP hesaplama fonksiyonu
+        async function calculatePlanningListTotalSP() {
+            const planningListId = document.getElementById('planning_list').value;
+            
+            if (!planningListId) {
+                return;
+            }
+
+            try {
+                showLoading('planning-list-sp-result');
+                
+                const response = await fetch('/get-planning-tasks', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        planning_list_id: planningListId
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success && data.tasks) {
+                    // SP toplamını hesapla
+                    const totalSP = data.tasks.reduce((sum, task) => sum + (task.sp || 0), 0);
+                    
+                    // Current sprint total alanını doldur
+                    document.getElementById('current_sprint_total').value = totalSP;
+                    
+                    // Bilgi mesajı göster
+                    document.getElementById('planning-list-sp-result').innerHTML = `
+                        <div class="alert alert-success">
+                            <strong>✅ Otomatik hesaplandı:</strong> ${data.tasks.length} task, toplam ${totalSP} SP
+                        </div>
+                    `;
+                } else {
+                    document.getElementById('planning-list-sp-result').innerHTML = `
+                        <div class="alert alert-error">
+                            <strong>❌ Hata:</strong> ${data.error || 'Planning list taskları alınamadı'}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Planning list SP hesaplama hatası:', error);
+                document.getElementById('planning-list-sp-result').innerHTML = `
+                    <div class="alert alert-error">
+                        <strong>❌ Hata:</strong> ${error.message}
+                    </div>
+                `;
+            }
         }
 
         function showLoading(elementId) {

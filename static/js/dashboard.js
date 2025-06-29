@@ -146,8 +146,10 @@ class DashboardManager {
             const capacity = this.capacityData[sprinter.id] || { suggested_sp: 0 };
             const assignedTasks = this.getAssignedTasks(sprinter.id);
             const assignedSP = assignedTasks.reduce((sum, task) => sum + task.sp, 0);
-            const utilizationPercent = capacity.suggested_sp > 0 ? 
+            const realUtilizationPercent = capacity.suggested_sp > 0 ? 
                 Math.round((assignedSP / capacity.suggested_sp) * 100) : 0;
+            const targetUtilizationPercent = capacity.target_sp_per_person > 0 ? 
+                Math.round((assignedSP / capacity.target_sp_per_person) * 100) : 0;
             
             html += `
                 <div class="sprinter-column" id="sprinter-${sprinter.id}" data-sprinter-id="${sprinter.id}">
@@ -156,7 +158,11 @@ class DashboardManager {
                         <div class="sprinter-capacity">
                             <div class="capacity-text">${assignedSP}/${capacity.suggested_sp} SP</div>
                             <div class="capacity-bar">
-                                <div class="capacity-fill" style="width: ${Math.min(utilizationPercent, 100)}%"></div>
+                                <div class="capacity-fill" style="width: ${Math.min(realUtilizationPercent, 100)}%"></div>
+                            </div>
+                            <div class="utilization-info">
+                                <span class="real-util">Reel: ${realUtilizationPercent}%</span>
+                                <span class="target-util">Hedef: ${targetUtilizationPercent}%</span>
                             </div>
                         </div>
                     </div>
@@ -268,11 +274,13 @@ class DashboardManager {
     updateCapacityDisplays() {
         // Update individual sprinter capacities
         this.sprinters.forEach(sprinter => {
-            const capacity = this.capacityData[sprinter.id] || { suggested_sp: 0 };
+            const capacity = this.capacityData[sprinter.id] || { suggested_sp: 0, target_sp_per_person: 21 };
             const assignedTasks = this.getAssignedTasks(sprinter.id);
             const assignedSP = assignedTasks.reduce((sum, task) => sum + task.sp, 0);
-            const utilizationPercent = capacity.suggested_sp > 0 ? 
+            const realUtilizationPercent = capacity.suggested_sp > 0 ? 
                 Math.round((assignedSP / capacity.suggested_sp) * 100) : 0;
+            const targetUtilizationPercent = capacity.target_sp_per_person > 0 ? 
+                Math.round((assignedSP / capacity.target_sp_per_person) * 100) : 0;
             
             // Update capacity text
             const capacityText = document.querySelector(`#sprinter-${sprinter.id} .capacity-text`);
@@ -283,7 +291,18 @@ class DashboardManager {
             // Update capacity bar
             const capacityFill = document.querySelector(`#sprinter-${sprinter.id} .capacity-fill`);
             if (capacityFill) {
-                capacityFill.style.width = `${Math.min(utilizationPercent, 100)}%`;
+                capacityFill.style.width = `${Math.min(realUtilizationPercent, 100)}%`;
+            }
+            
+            // Update utilization info
+            const realUtilElement = document.querySelector(`#sprinter-${sprinter.id} .real-util`);
+            if (realUtilElement) {
+                realUtilElement.textContent = `Reel: ${realUtilizationPercent}%`;
+            }
+            
+            const targetUtilElement = document.querySelector(`#sprinter-${sprinter.id} .target-util`);
+            if (targetUtilElement) {
+                targetUtilElement.textContent = `Hedef: ${targetUtilizationPercent}%`;
             }
             
             // Update empty state
@@ -295,15 +314,17 @@ class DashboardManager {
         
         // Update global summary
         const totalCapacity = Object.values(this.capacityData).reduce((sum, cap) => sum + cap.suggested_sp, 0);
+        const totalTargetCapacity = Object.values(this.capacityData).reduce((sum, cap) => sum + (cap.target_sp_per_person || 21), 0);
         const totalAssigned = this.tasks
             .filter(task => task.assignedTo)
             .reduce((sum, task) => sum + task.sp, 0);
-        const teamUtilization = totalCapacity > 0 ? Math.round((totalAssigned / totalCapacity) * 100) : 0;
+        const teamRealUtilization = totalCapacity > 0 ? Math.round((totalAssigned / totalCapacity) * 100) : 0;
+        const teamTargetUtilization = totalTargetCapacity > 0 ? Math.round((totalAssigned / totalTargetCapacity) * 100) : 0;
         const remainingCapacity = totalCapacity - totalAssigned;
         const assignedTaskCount = this.tasks.filter(task => task.assignedTo).length;
         
         document.getElementById('assigned-capacity').textContent = totalAssigned;
-        document.getElementById('team-utilization').textContent = `${teamUtilization}%`;
+        document.getElementById('team-utilization').textContent = `R:${teamRealUtilization}% H:${teamTargetUtilization}%`;
         document.getElementById('remaining-capacity').textContent = remainingCapacity;
         document.getElementById('task-count').textContent = assignedTaskCount;
     }
@@ -573,15 +594,17 @@ function exportAsCSV(data) {
     });
     
     // Add capacity summary
-    csv += '\n\nSprinter,Suggested Capacity,Assigned SP,Utilization\n';
+    csv += '\n\nSprinter,Suggested Capacity,Assigned SP,Real Utilization,Target Utilization\n';
     data.sprinters.forEach(sprinter => {
         const capacity = data.capacityData[sprinter.id];
         const assignedTasks = data.tasks.filter(t => t.assignedTo === sprinter.id);
         const assignedSP = assignedTasks.reduce((sum, t) => sum + t.sp, 0);
-        const utilization = capacity.suggested_sp > 0 ? 
+        const realUtilization = capacity.suggested_sp > 0 ? 
             Math.round((assignedSP / capacity.suggested_sp) * 100) : 0;
+        const targetUtilization = capacity.target_sp_per_person > 0 ? 
+            Math.round((assignedSP / capacity.target_sp_per_person) * 100) : 0;
         
-        csv += `"${sprinter.name}",${capacity.suggested_sp},${assignedSP},${utilization}%\n`;
+        csv += `"${sprinter.name}",${capacity.suggested_sp},${assignedSP},${realUtilization}%,${targetUtilization}%\n`;
     });
     
     const blob = new Blob([csv], { type: 'text/csv' });

@@ -29,17 +29,18 @@ class SprinterExceptions:
             # Target and Base Settings
             'target_sp_per_person': 21,     # Target SP for 100% utilization
             'sprint_working_days': 5,       # Default working days per sprint
-            'min_sp_threshold': 3,          # Minimum SP to assign (avoid very low assignments)
+            'min_sp_threshold': 6,          # Minimum SP to assign (avoid very low assignments)
             'target_push_factor': 0.7,     # How aggressively to push towards target (0.5-1.0)
             
             # Exception Settings
-            'customer_delegate_min_sp': 2,  # Minimum SP for customer delegates
+            'customer_delegate_min_sp': 6,  # Minimum SP for customer delegates
             'customer_delegate_days': 5,    # Default customer delegate duration (days)
+            'sp_per_day': 5,                # Story points per day for dedication calculations
             'on_call_reduction_sp': 3,      # SP reduction for on-call sprinters
             'vacation_reduction_per_day': 0.2,  # SP reduction per vacation day (20% per day)
             
             # Zero Prevention Settings
-            'min_sp_unless_fully_unavailable': 2,  # Never go below this unless 100% unavailable
+            'min_sp_unless_fully_unavailable': 6,  # Never go below this unless 100% unavailable
             'full_unavailability_threshold': 1.0,  # When 100% of sprint is exceptions (1.0 = full sprint)
             
             # Algorithm Settings
@@ -197,23 +198,24 @@ class SprinterExceptions:
                 adjusted_sp = adjusted_sp * working_day_factor
                 adjustments.append(f"Çalışma günü ayarı: {working_days} gün")
             
-            # Customer Delegate - Duration-based calculation
+            # Customer Delegate - Duration-based calculation using SP per day
             if sprinter_exceptions.get('customer_delegate', False):
                 try:
                     delegate_days = sprinter_exceptions.get('customer_delegate_days', settings.get('customer_delegate_days', 5))
+                    sp_per_day = settings.get('sp_per_day', 5)
                     
                     if delegate_days >= working_days:
-                        # Full sprint dedication
+                        # Full sprint dedication - use minimum SP for customer delegates
                         min_sp = settings.get('customer_delegate_min_sp', 2)
                         adjusted_sp = min_sp
                         adjustments.append(f"Müşteri dedikesi (tam sprint): {min_sp} SP")
                     else:
-                        # Partial dedication
-                        dedication_factor = delegate_days / working_days
-                        remaining_factor = 1 - dedication_factor
-                        partial_sp = max(settings.get('customer_delegate_min_sp', 2), adjusted_sp * remaining_factor)
+                        # Partial dedication - calculate based on remaining days
+                        remaining_days = working_days - delegate_days
+                        dedication_sp = remaining_days * sp_per_day
+                        partial_sp = max(settings.get('customer_delegate_min_sp', 2), min(dedication_sp, adjusted_sp))
                         adjusted_sp = partial_sp
-                        adjustments.append(f"Müşteri dedikesi ({delegate_days}/{working_days} gün): {partial_sp:.1f} SP")
+                        adjustments.append(f"Müşteri dedikesi ({delegate_days}/{working_days} gün, {remaining_days}×{sp_per_day}SP): {partial_sp:.1f} SP")
                 except Exception as customer_delegate_error:
                     print(f"⚠️ Customer delegate hesaplama hatası: {customer_delegate_error}")
                     # Fallback to simple minimum SP
