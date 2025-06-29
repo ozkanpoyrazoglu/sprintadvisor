@@ -38,6 +38,10 @@ class SprinterExceptions:
             'on_call_reduction_sp': 3,      # SP reduction for on-call sprinters
             'vacation_reduction_per_day': 0.2,  # SP reduction per vacation day (20% per day)
             
+            # Zero Prevention Settings
+            'min_sp_unless_fully_unavailable': 2,  # Never go below this unless 100% unavailable
+            'full_unavailability_threshold': 1.0,  # When 100% of sprint is exceptions (1.0 = full sprint)
+            
             # Algorithm Settings
             'capacity_growth_limit': 1.5,   # Maximum growth factor per sprint (50% increase max)
             'low_performer_boost': 2.0,     # Boost factor for consistently low performers
@@ -240,16 +244,59 @@ class SprinterExceptions:
                     print(f"⚠️ On-call hesaplama hatası: {oncall_error}")
                     adjustments.append(f"Nöbetçi hesaplama hatası")
             
-            # Ensure minimum threshold
+            # Prevent 0 SP unless fully unavailable
+            try:
+                # Calculate total unavailability factor
+                total_unavailable_days = 0
+                
+                # Count vacation days
+                if vacation_days > 0:
+                    total_unavailable_days += vacation_days
+                
+                # Count customer delegate days (if full dedication)
+                if sprinter_exceptions.get('customer_delegate', False):
+                    delegate_days = sprinter_exceptions.get('customer_delegate_days', settings.get('customer_delegate_days', 5))
+                    if delegate_days >= working_days:
+                        total_unavailable_days += working_days  # Full sprint dedication
+                    else:
+                        total_unavailable_days += delegate_days  # Partial dedication
+                
+                # Calculate unavailability ratio
+                unavailability_ratio = total_unavailable_days / working_days
+                full_threshold = settings.get('full_unavailability_threshold', 1.0)
+                
+                # If not fully unavailable, enforce minimum SP
+                if unavailability_ratio < full_threshold:
+                    min_sp_unless_unavailable = settings.get('min_sp_unless_fully_unavailable', 2)
+                    if adjusted_sp < min_sp_unless_unavailable:
+                        adjusted_sp = min_sp_unless_unavailable
+                        adjustments.append(f"0 SP önleme: {min_sp_unless_unavailable} SP (tam müsait değil ama 0 olamaz)")
+                else:
+                    # Fully unavailable, but still ensure some minimum
+                    if adjusted_sp <= 0:
+                        min_emergency_sp = 1
+                        adjusted_sp = min_emergency_sp
+                        adjustments.append(f"Acil durum minimumu: {min_emergency_sp} SP")
+                
+            except Exception as zero_prevention_error:
+                print(f"⚠️ 0 SP önleme hatası: {zero_prevention_error}")
+                # Emergency fallback
+                if adjusted_sp <= 0:
+                    adjusted_sp = 1
+                    adjustments.append("Acil durum: 1 SP")
+            
+            # Ensure normal minimum threshold for reasonable assignments
             try:
                 min_threshold = settings.get('min_sp_threshold', 3)
                 if adjusted_sp > 0 and adjusted_sp < min_threshold:
-                    adjusted_sp = min_threshold
-                    adjustments.append(f"Minimum eşik: {min_threshold} SP")
+                    # Only apply if it's not an exception case (don't override zero prevention)
+                    if adjusted_sp >= settings.get('min_sp_unless_fully_unavailable', 2):
+                        adjusted_sp = min_threshold
+                        adjustments.append(f"Minimum eşik: {min_threshold} SP")
             except Exception as threshold_error:
                 print(f"⚠️ Minimum threshold hatası: {threshold_error}")
                 # Safe fallback
-                if adjusted_sp > 0 and adjusted_sp < 1:
+                if adjusted_sp <= 0:
                     adjusted_sp = 1
             
             explanation = "; ".join(adjustments) if adjustments else "Exception yok"

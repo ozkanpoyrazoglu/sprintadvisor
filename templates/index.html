@@ -483,6 +483,35 @@
                 <input type="number" id="sprint_working_days" placeholder="5" min="1" max="10" value="5">
                 <div class="help-text">Bu sprint'teki çalışma günü sayısı (tatil günleri için ayarlayın)</div>
             </div>
+
+            <div class="form-group">
+                <label>Analiz Edilecek Sprintler</label>
+                <div style="margin-bottom: 12px;">
+                    <label>
+                        <input type="checkbox" id="use-default-sprints" checked onchange="toggleSprintRangeMode()">
+                        Varsayılan (Son 3 Sprint) Kullan
+                    </label>
+                </div>
+                <div id="sprint-range-container" style="display: none;">
+                    <div style="margin-bottom: 8px;">
+                        <button onclick="showAvailableSprintRange()" style="background-color: #4a5568; font-size: 14px; padding: 8px 12px;">
+                            Sprint Aralığını Göster
+                        </button>
+                        <span id="sprint-range-info" style="margin-left: 10px; color: #718096; font-size: 14px;"></span>
+                    </div>
+                    <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 8px;">
+                        <div style="flex: 1;">
+                            <label for="start_sprint" style="font-size: 14px; font-weight: 500;">Başlangıç Sprint</label>
+                            <input type="number" id="start_sprint" placeholder="150" min="1">
+                        </div>
+                        <div style="flex: 1;">
+                            <label for="end_sprint" style="font-size: 14px; font-weight: 500;">Bitiş Sprint</label>
+                            <input type="number" id="end_sprint" placeholder="154" min="1">
+                        </div>
+                    </div>
+                </div>
+                <div class="help-text">Varsayılan: mevcut sprintten önceki 3 sprint analiz edilir. Manuel: başlangıç-bitiş aralığı belirleyin.</div>
+            </div>
             
             <button onclick="suggestCapacity()">Kapasite Önerisi Al</button>
             <div id="suggestion-result"></div>
@@ -724,6 +753,94 @@
             }
         }
 
+        async function showAvailableSprintRange() {
+            const archiveListId = document.getElementById('archive_list').value;
+
+            if (!archiveListId) {
+                showAlert('suggestion-result', 'Önce Archive listesi seçin', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/get-available-sprints', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        archive_list_id: archiveListId
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    displaySprintRangeInfo(data.sprints);
+                } else {
+                    showAlert('suggestion-result', 'Sprint aralığı alınamadı: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showAlert('suggestion-result', 'Sprint aralığı hatası: ' + error.message, 'error');
+            }
+        }
+
+        function displaySprintRangeInfo(sprints) {
+            const infoElement = document.getElementById('sprint-range-info');
+            
+            if (sprints.length === 0) {
+                infoElement.textContent = 'Mevcut sprint bulunamadı';
+                return;
+            }
+
+            const minSprint = Math.min(...sprints);
+            const maxSprint = Math.max(...sprints);
+            const count = sprints.length;
+            
+            infoElement.textContent = `Mevcut aralık: ${minSprint}-${maxSprint} (${count} sprint)`;
+            
+            // Input'lara örnek değerler öner
+            document.getElementById('start_sprint').placeholder = minSprint.toString();
+            document.getElementById('end_sprint').placeholder = maxSprint.toString();
+        }
+
+        function toggleSprintRangeMode() {
+            const useDefault = document.getElementById('use-default-sprints').checked;
+            const rangeContainer = document.getElementById('sprint-range-container');
+            
+            if (useDefault) {
+                rangeContainer.style.display = 'none';
+            } else {
+                rangeContainer.style.display = 'block';
+            }
+        }
+
+        function getSelectedSprints() {
+            const useDefault = document.getElementById('use-default-sprints').checked;
+            
+            if (useDefault) {
+                return null; // Backend will use default last 3 sprints
+            }
+            
+            const startSprint = parseInt(document.getElementById('start_sprint').value);
+            const endSprint = parseInt(document.getElementById('end_sprint').value);
+            
+            if (!startSprint || !endSprint) {
+                return null;
+            }
+            
+            if (startSprint > endSprint) {
+                return null; // Invalid range
+            }
+            
+            // Generate array of sprints in range
+            const sprints = [];
+            for (let i = startSprint; i <= endSprint; i++) {
+                sprints.push(i);
+            }
+            
+            return sprints;
+        }
+
         async function suggestCapacity() {
             if (!analysisCompleted) {
                 showAlert('suggestion-result', 'Önce performans analizi yapın', 'error');
@@ -734,26 +851,56 @@
             const sprintWorkingDays = document.getElementById('sprint_working_days').value;
             const archiveListId = document.getElementById('archive_list').value;
             const currentSprintNumber = document.getElementById('current_sprint_number').value;
+            const selectedSprints = getSelectedSprints();
 
             if (!currentSprintTotal) {
                 showAlert('suggestion-result', 'Mevcut sprint toplam story point girin', 'error');
                 return;
             }
 
+            // Sprint seçimi kontrolü
+            const useDefault = document.getElementById('use-default-sprints').checked;
+            if (!useDefault) {
+                if (!selectedSprints || selectedSprints.length === 0) {
+                    showAlert('suggestion-result', 'Manuel seçim yapıyorsanız başlangıç ve bitiş sprint girin', 'error');
+                    return;
+                }
+                
+                const startSprint = parseInt(document.getElementById('start_sprint').value);
+                const endSprint = parseInt(document.getElementById('end_sprint').value);
+                
+                if (startSprint > endSprint) {
+                    showAlert('suggestion-result', 'Başlangıç sprint bitiş sprintten büyük olamaz', 'error');
+                    return;
+                }
+                
+                if (endSprint - startSprint > 50) {
+                    showAlert('suggestion-result', 'Çok geniş aralık seçtiniz (max 50 sprint)', 'error');
+                    return;
+                }
+            }
+
             showLoading('suggestion-result');
 
             try {
+                const requestBody = {
+                    archive_list_id: archiveListId,
+                    current_sprint_total: parseInt(currentSprintTotal),
+                    current_sprint_number: parseInt(currentSprintNumber),
+                    sprint_working_days: parseInt(sprintWorkingDays) || 5
+                };
+
+                // Seçilen sprintler varsa ekle
+                if (selectedSprints) {
+                    requestBody.selected_sprints = selectedSprints;
+                }
+
                 const response = await fetch('/suggest', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                        archive_list_id: archiveListId,
-                        current_sprint_total: parseInt(currentSprintTotal),
-                        current_sprint_number: parseInt(currentSprintNumber),
-                        sprint_working_days: parseInt(sprintWorkingDays) || 5
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
                 const data = await response.json();

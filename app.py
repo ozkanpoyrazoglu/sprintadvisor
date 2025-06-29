@@ -370,8 +370,8 @@ class SprintAnalyzer:
             print(f"⚠️ Kart isminden sprint no okuma hatası: {e}")
             return None
     
-    def get_last_3_sprints(self, cards, archive_list_id, current_sprint_number, custom_fields):
-        """ArchiveNew listesindeki son 3 sprintin kartlarını filtrele"""
+    def get_selected_sprints(self, cards, archive_list_id, selected_sprints, custom_fields):
+        """ArchiveNew listesindeki seçilen sprintlerin kartlarını filtrele"""
         # SprintNo, StoryPoint ve Sprinter custom field ID'lerini bul
         sprint_field_id, story_point_field_id, sprinter_field_id = self.find_custom_field_ids(custom_fields)
         
@@ -384,12 +384,9 @@ class SprintAnalyzer:
         
         archive_cards = [card for card in cards if card.get('idList') == archive_list_id]
         
-        # Son 3 sprintin numaralarını hesapla
-        last_3_sprints = [current_sprint_number - 3, current_sprint_number - 2, current_sprint_number - 1]
+        print(f"📊 Analiz edilecek sprintler: {selected_sprints}")
         
-        print(f"📊 Analiz edilecek sprintler: {last_3_sprints}")
-        
-        # Bu sprintlere ait kartları filtrele
+        # Seçilen sprintlere ait kartları filtrele
         filtered_cards = []
         found_sprints = set()
         
@@ -400,7 +397,7 @@ class SprintAnalyzer:
             if sprint_num is None:
                 sprint_num = self.extract_sprint_number(card['name'])
             
-            if sprint_num in last_3_sprints:
+            if sprint_num in selected_sprints:
                 filtered_cards.append(card)
                 found_sprints.add(sprint_num)
         
@@ -408,6 +405,35 @@ class SprintAnalyzer:
         print(f"🎯 Toplam kart sayısı: {len(filtered_cards)}")
         
         return filtered_cards, sorted(found_sprints)
+    
+    def get_available_sprints(self, cards, archive_list_id, custom_fields):
+        """ArchiveNew listesindeki mevcut sprint numaralarını bul"""
+        # SprintNo custom field ID'sini bul
+        sprint_field_id, _, _ = self.find_custom_field_ids(custom_fields)
+        
+        if not sprint_field_id:
+            print("⚠️ SprintNo custom field bulunamadı!")
+            return []
+        
+        archive_cards = [card for card in cards if card.get('idList') == archive_list_id]
+        found_sprints = set()
+        
+        for card in archive_cards:
+            sprint_num = self.extract_sprint_number_from_custom_field(card)
+            
+            # Fallback: Eğer custom field'dan alınamadıysa kart isminden dene
+            if sprint_num is None:
+                sprint_num = self.extract_sprint_number(card['name'])
+            
+            if sprint_num:
+                found_sprints.add(sprint_num)
+        
+        return sorted(list(found_sprints))
+    
+    def get_last_3_sprints(self, cards, archive_list_id, current_sprint_number, custom_fields):
+        """Geriye uyumluluk için - son 3 sprintin kartlarını filtrele"""
+        selected_sprints = [current_sprint_number - 3, current_sprint_number - 2, current_sprint_number - 1]
+        return self.get_selected_sprints(cards, archive_list_id, selected_sprints, custom_fields)
     
     def analyze_member_performance(self, cards):
         """Üyelerin geçmiş performansını analiz et"""
@@ -1063,6 +1089,47 @@ def analyze_performance():
         traceback.print_exc()
         return jsonify({'error': f'Analiz hatası: {str(e)}'}), 500
 
+@app.route('/get-available-sprints', methods=['POST'])
+def get_available_sprints():
+    """Mevcut sprintlerin listesini döndür"""
+    if not trello_api:
+        return jsonify({'error': 'Önce Trello ayarlarını yapın'}), 400
+    
+    data = request.json
+    archive_list_id = data.get('archive_list_id')
+    
+    if not archive_list_id:
+        return jsonify({'error': 'ArchiveNew list ID gerekli'}), 400
+    
+    try:
+        # Custom field'ları çek
+        custom_fields = trello_api.get_custom_fields()
+        
+        if not custom_fields:
+            return jsonify({'error': 'Board\'da custom field bulunamadı'}), 400
+        
+        # Board verilerini al
+        all_cards = trello_api.get_board_data()
+        
+        if not all_cards:
+            return jsonify({'error': 'Board\'da kart bulunamadı'}), 400
+        
+        # Mevcut sprintleri bul
+        available_sprints = sprint_analyzer.get_available_sprints(
+            all_cards, archive_list_id, custom_fields
+        )
+        
+        return jsonify({
+            'success': True,
+            'sprints': available_sprints
+        })
+        
+    except Exception as e:
+        print(f"❌ Mevcut sprintler hatası: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Mevcut sprintler hatası: {str(e)}'}), 500
+
 @app.route('/suggest', methods=['POST'])
 def suggest_capacity():
     """Mevcut sprint için kapasite önerisi yap"""
@@ -1073,6 +1140,7 @@ def suggest_capacity():
     archive_list_id = data.get('archive_list_id')
     current_sprint_total = data.get('current_sprint_total', 0)
     current_sprint_number = data.get('current_sprint_number')
+    selected_sprints = data.get('selected_sprints')  # Yeni parametre
     
     if not archive_list_id or not current_sprint_number:
         return jsonify({'error': 'ArchiveNew list ID ve mevcut sprint numarası gerekli'}), 400
@@ -1092,14 +1160,22 @@ def suggest_capacity():
         if not all_cards:
             return jsonify({'error': 'Board\'da kart bulunamadı'}), 400
         
-        last_sprint_cards, sprint_numbers = sprint_analyzer.get_last_3_sprints(
-            all_cards, archive_list_id, current_sprint_number, custom_fields
-        )
+        # Seçilen sprintler varsa onları kullan, yoksa varsayılan olarak son 3 sprintti kullan
+        if selected_sprints and len(selected_sprints) > 0:
+            print(f"📊 Manuel seçilen sprintler kullanılıyor: {selected_sprints}")
+            sprint_cards, sprint_numbers = sprint_analyzer.get_selected_sprints(
+                all_cards, archive_list_id, selected_sprints, custom_fields
+            )
+        else:
+            print("📊 Varsayılan son 3 sprint kullanılıyor")
+            sprint_cards, sprint_numbers = sprint_analyzer.get_last_3_sprints(
+                all_cards, archive_list_id, current_sprint_number, custom_fields
+            )
         
-        if not last_sprint_cards:
+        if not sprint_cards:
             return jsonify({'error': 'Analiz edilecek sprint kartı bulunamadı'}), 400
             
-        member_stats = sprint_analyzer.analyze_member_performance(last_sprint_cards)
+        member_stats = sprint_analyzer.analyze_member_performance(sprint_cards)
         
         if not member_stats:
             return jsonify({'error': 'Üye istatistikleri oluşturulamadı'}), 400
@@ -1111,7 +1187,7 @@ def suggest_capacity():
         # Kapasite önerileri yap (exception'lar dahil)
         suggestions = sprint_analyzer.suggest_capacity(
             member_stats, current_sprint_total, current_sprint_number, 
-            sprinter_exceptions, last_sprint_cards, sprint_working_days
+            sprinter_exceptions, sprint_cards, sprint_working_days
         )
         
         # Toplam önerilen SP'yi hesapla
